@@ -108,8 +108,11 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
             val cmd = parts.getOrNull(3)?.replace(";", ",") ?: ""
             if (status == "SUCCESS") {
                 _aiResult.value = AiTaskResult(true, summary, cmd, null)
+                logToTerminal("AI task executed successfully: \"$summary\" -> $cmd")
             } else {
-                _aiResult.value = AiTaskResult(false, "", "", summary.ifEmpty { "AI execution error on Mac" })
+                val err = summary.ifEmpty { "AI execution error on Mac" }
+                _aiResult.value = AiTaskResult(false, "", "", err)
+                logToTerminal("AI task failed: $err")
             }
         } else if (message.startsWith("APPS:")) {
             val appNames = message.removePrefix("APPS:").split(",").map { it.trim() }.filter { it.isNotEmpty() }
@@ -228,9 +231,15 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
         send("SET_AI_KEY,${key.trim()}")
     }
 
+    fun logToTerminal(message: String) {
+        android.util.Log.i("TrackpadAI", message)
+        send("AI_LOG,$message")
+    }
+
     fun sendAiTask(prompt: String) {
         _isAiRunning.value = true
         _aiResult.value = null
+        logToTerminal("User requested AI prompt: \"$prompt\"")
         val b64 = Base64.encodeToString(prompt.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
         send("AI_TASK_B64,$b64")
     }

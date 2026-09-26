@@ -305,16 +305,21 @@ func callGeminiAndExecute(prompt: String, completion: @escaping (Bool, String, S
     }
 
     let candidateUrls = [
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\(apiKey)",
-        "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=\(apiKey)",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=\(apiKey)",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=\(apiKey)"
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=\(apiKey)",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=\(apiKey)",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=\(apiKey)",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=\(apiKey)",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=\(apiKey)"
     ]
 
     Task {
         var lastError = ""
         for urlStr in candidateUrls {
             guard let url = URL(string: urlStr) else { continue }
+            let modelName = url.pathComponents.last ?? "model"
+            print("[AI] Querying Gemini model: \(modelName)")
+            fflush(stdout)
+
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -350,6 +355,8 @@ func callGeminiAndExecute(prompt: String, completion: @escaping (Bool, String, S
                        let type = cmdJson["type"] as? String,
                        let command = cmdJson["command"] as? String {
                         let summary = (cmdJson["summary"] as? String) ?? "Executed task"
+                        print("[AI Success] Model: \(modelName) -> [\(type)] \(command) (\(summary))")
+                        fflush(stdout)
                         DispatchQueue.main.async {
                             executeAICommand(type: type, command: command)
                         }
@@ -358,12 +365,18 @@ func callGeminiAndExecute(prompt: String, completion: @escaping (Bool, String, S
                     }
                 } else if let httpResp = response as? HTTPURLResponse {
                     let errBody = String(data: data, encoding: .utf8) ?? ""
-                    lastError = "HTTP \(httpResp.statusCode): \(errBody.prefix(80))"
+                    lastError = "HTTP \(httpResp.statusCode): \(errBody.prefix(120))"
+                    print("[AI Warning] Model \(modelName) returned \(lastError)")
+                    fflush(stdout)
                 }
             } catch {
                 lastError = error.localizedDescription
+                print("[AI Warning] Model \(modelName) request failed: \(lastError)")
+                fflush(stdout)
             }
         }
+        print("[AI Error] All models failed. Last error: \(lastError)")
+        fflush(stdout)
         completion(false, lastError.isEmpty ? "Failed to query Gemini model" : lastError, "")
     }
 }
@@ -620,6 +633,13 @@ class TrackpadServer {
                     executeAICommand(type: parts[0], command: cmd)
                 }
             }
+            return
+        }
+
+        if message.hasPrefix("AI_LOG,") {
+            let logMsg = String(message.dropFirst("AI_LOG,".count))
+            print("[App Terminal Log] \(logMsg)")
+            fflush(stdout)
             return
         }
 
