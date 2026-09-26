@@ -2,7 +2,9 @@ package com.example.hotspottrackpad
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,34 +23,29 @@ fun ConnectScreen(client: TrackpadClient) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF121212))
-            .padding(24.dp),
+            .background(Color(0xFF0F0F0F))
+            .padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
         Card(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth(0.75f)
+                .verticalScroll(rememberScrollState()),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
             shape = RoundedCornerShape(16.dp)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp),
+                    .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "📱 Hotspot Trackpad",
-                    fontSize = 22.sp,
+                    text = "📱 Hotspot Trackpad & Stream",
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
-                )
-
-                Text(
-                    text = "Connect to your Mac before opening the trackpad",
-                    fontSize = 13.sp,
-                    color = Color(0xFFAAAAAA),
-                    textAlign = TextAlign.Center
                 )
 
                 // Status Indicator
@@ -59,14 +56,14 @@ fun ConnectScreen(client: TrackpadClient) {
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
+                                modifier = Modifier.size(16.dp),
                                 strokeWidth = 2.dp,
                                 color = Color(0xFF64B5F6)
                             )
                             Text(
                                 text = current.message,
                                 color = Color(0xFF64B5F6),
-                                fontSize = 13.sp
+                                fontSize = 12.sp
                             )
                         }
                     }
@@ -74,60 +71,56 @@ fun ConnectScreen(client: TrackpadClient) {
                         Text(
                             text = current.message,
                             color = Color(0xFFEF5350),
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             textAlign = TextAlign.Center
                         )
                     }
                     else -> {}
                 }
 
-                HorizontalDivider(color = Color(0xFF2C2C2C))
-
-                // Auto Discover Button
-                Button(
-                    onClick = { client.autoDiscover() },
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2962FF))
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("🔍 Auto-Discover Mac", color = Color.White)
-                }
-
-                Text(
-                    text = "— OR ENTER MAC IP MANUALLY —",
-                    fontSize = 11.sp,
-                    color = Color(0xFF777777),
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                OutlinedTextField(
-                    value = inputIp,
-                    onValueChange = { inputIp = it },
-                    label = { Text("Mac IP Address", color = Color(0xFFAAAAAA)) },
-                    placeholder = { Text("e.g. 192.168.43.15 or 10.x.x.x", color = Color(0xFF666666)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color(0xFF2962FF),
-                        unfocusedBorderColor = Color(0xFF444444)
+                    OutlinedTextField(
+                        value = inputIp,
+                        onValueChange = { inputIp = it },
+                        label = { Text("Mac IP Address", color = Color(0xFFAAAAAA), fontSize = 11.sp) },
+                        placeholder = { Text("e.g. 10.202.35.108", color = Color(0xFF666666)) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF2962FF),
+                            unfocusedBorderColor = Color(0xFF444444)
+                        )
                     )
-                )
 
-                Button(
-                    onClick = { client.connectTo(inputIp) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853))
-                ) {
-                    Text("Connect to Mac", color = Color.White)
+                    Button(
+                        onClick = { client.connectTo(inputIp) },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853)),
+                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp)
+                    ) {
+                        Text("Connect", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
+                        onClick = { client.autoDiscover() },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2962FF)),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp)
+                    ) {
+                        Text("Auto-Scan", color = Color.White)
+                    }
                 }
 
                 Text(
                     text = "Tip: Run MacTrackpadServer in Terminal on your Mac to view your Mac's active IP address.",
-                    fontSize = 11.sp,
-                    color = Color(0xFF888888),
+                    fontSize = 10.sp,
+                    color = Color(0xFF777777),
                     textAlign = TextAlign.Center
                 )
             }

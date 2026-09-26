@@ -38,7 +38,7 @@ fun AppsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF121212))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         // Search and Refresh Row
         Row(
@@ -67,13 +67,13 @@ fun AppsScreen(
                 onClick = { client.fetchApps() },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
                 shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp)
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
             ) {
                 Text("🔄", fontSize = 16.sp)
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         if (apps.isEmpty()) {
             Box(
@@ -84,8 +84,8 @@ fun AppsScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = Color(0xFF2962FF))
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("Fetching applications from Mac...", color = Color(0xFFAAAAAA), fontSize = 14.sp)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("Fetching applications from Mac...", color = Color(0xFFAAAAAA), fontSize = 13.sp)
                 }
             }
         } else if (filteredApps.isEmpty()) {
@@ -99,11 +99,11 @@ fun AppsScreen(
             }
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 96.dp),
+                columns = GridCells.Adaptive(minSize = 100.dp),
                 modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(vertical = 8.dp)
+                contentPadding = PaddingValues(bottom = 68.dp)
             ) {
                 items(filteredApps, key = { it }) { appName ->
                     AppItemCard(
@@ -136,13 +136,13 @@ private fun AppItemCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(40.dp)
                     .background(Color(0xFF2A2A2A), shape = CircleShape),
                 contentAlignment = Alignment.Center
             ) {
@@ -150,16 +150,16 @@ private fun AppItemCard(
                     text = appName.take(1).uppercase(),
                     color = Color(0xFF64B5F6),
                     fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp
+                    fontSize = 16.sp
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Text(
                 text = appName,
                 color = Color.White,
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,

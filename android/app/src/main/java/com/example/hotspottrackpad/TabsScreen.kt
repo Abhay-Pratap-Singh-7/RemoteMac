@@ -3,8 +3,10 @@ package com.example.hotspottrackpad
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -12,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,7 +45,7 @@ fun TabsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF121212))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         // Search and Refresh Row
         Row(
@@ -71,7 +74,7 @@ fun TabsScreen(
                 onClick = { client.fetchOpenTabs() },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
                 shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp)
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
             ) {
                 Text("🔄", fontSize = 16.sp)
             }
@@ -88,8 +91,8 @@ fun TabsScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = Color(0xFF2962FF))
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("Fetching open windows & tabs...", color = Color(0xFFAAAAAA), fontSize = 14.sp)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("Fetching open windows & tabs...", color = Color(0xFFAAAAAA), fontSize = 13.sp)
                 }
             }
         } else if (filteredTabs.isEmpty()) {
@@ -102,13 +105,15 @@ fun TabsScreen(
                 Text("No open tabs/windows matching '$searchQuery'", color = Color(0xFF777777))
             }
         } else {
-            LazyColumn(
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 150.dp),
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(vertical = 4.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 68.dp) // space for floating dock
             ) {
                 items(filteredTabs, key = { it.id }) { tab ->
-                    TabItemCard(
+                    TabCardGridItem(
                         tab = tab,
                         onClick = {
                             client.switchTab(tab)
@@ -124,72 +129,89 @@ fun TabsScreen(
 }
 
 @Composable
-private fun TabItemCard(
+private fun TabCardGridItem(
     tab: MacTab,
     onClick: () -> Unit
 ) {
     val isBrowserTab = tab.type == "chrome" || tab.type == "brave" || tab.type == "safari"
-    val badgeColor = if (isBrowserTab) Color(0xFF2962FF) else Color(0xFF7B1FA2)
+    val badgeColor = if (isBrowserTab) Color(0xFF2962FF) else Color(0xFFAB47BC)
     val badgeText = if (isBrowserTab) "Tab" else "Window"
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .height(120.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
     ) {
-        Row(
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .fillMaxSize()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .background(Color(0xFF2D2D2D), shape = CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = tab.appName.take(1).uppercase(),
+                            color = Color(0xFF64B5F6),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+
                     Text(
                         text = tab.appName,
                         color = Color(0xFF90CAF9),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-
-                    Surface(
-                        color = badgeColor.copy(alpha = 0.25f),
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
-                        Text(
-                            text = badgeText,
-                            color = badgeColor,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = tab.title,
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Surface(
+                    color = badgeColor.copy(alpha = 0.25f),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text(
+                        text = badgeText,
+                        color = badgeColor,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = tab.title,
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 16.sp
+            )
 
             Text(
-                text = "Switch ➜",
+                text = "Tap to switch ➜",
                 color = Color(0xFF00E676),
-                fontSize = 12.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Bold
             )
         }

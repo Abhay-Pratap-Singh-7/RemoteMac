@@ -1,6 +1,9 @@
 import Cocoa
 import CoreGraphics
 import Network
+import ScreenCaptureKit
+import ImageIO
+import UniformTypeIdentifiers
 
 func getLocalIPAddresses() -> [String] {
     var addresses = [String]()
@@ -156,7 +159,7 @@ func refreshOpenWindowsAndTabs() -> String {
             let target1 = parts[3]
             let target2 = parts[4]
             cachedTabs[currentId] = CachedTab(id: currentId, type: type, appName: appName, title: title, target1: target1, target2: target2)
-            clientList.append("\(currentId)|||\(appName)|||\(title)|||\(type)")
+            clientList.append("\(currentId)|||AppName:\(appName)|||Title:\(title)|||Type:\(type)")
             currentId += 1
         }
     }
@@ -252,6 +255,112 @@ func pressKey(virtualKey: CGKeyCode) {
     up?.post(tap: .cghidEventTap)
 }
 
+// MARK: - MJPEG Video Streamer (HTTP on port 8081)
+class MJPEGStreamer {
+    private var listener: NWListener?
+    private var connections = [NWConnection]()
+    private var isCapturing = false
+    private let streamLock = NSLock()
+    let port: UInt16 = 8081
+
+    func start() {
+        guard let p = NWEndpoint.Port(rawValue: port) else { return }
+        do {
+            let params = NWParameters.tcp
+            params.allowLocalEndpointReuse = true
+            listener = try NWListener(using: params, on: p)
+            listener?.newConnectionHandler = { [weak self] conn in
+                conn.start(queue: .global(qos: .userInteractive))
+                self?.handleClient(conn)
+            }
+            listener?.start(queue: .global())
+            print(" Video Streamer listening on HTTP: http://<macIp>:\(port)/stream")
+        } catch {
+            print("Failed to start video streamer: \(error.localizedDescription)")
+        }
+    }
+
+    private func handleClient(_ conn: NWConnection) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] _, _, _, _ in
+            guard let self = self else { return }
+            let header = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\nContent-Type: multipart/x-mixed-replace; boundary=--frame\r\n\r\n"
+            conn.send(content: header.data(using: .utf8), completion: .contentProcessed({ _ in }))
+
+            self.streamLock.lock()
+            self.connections.append(conn)
+            let needsStart = !self.isCapturing
+            if needsStart {
+                self.isCapturing = true
+            }
+            self.streamLock.unlock()
+
+            if needsStart {
+                self.startCaptureLoop()
+            }
+        }
+    }
+
+    private func startCaptureLoop() {
+        Task {
+            print("[Stream] Screen capture loop started")
+            while true {
+                self.streamLock.lock()
+                self.connections.removeAll(where: {
+                    if case .cancelled = $0.state { return true }
+                    if case .failed = $0.state { return true }
+                    return false
+                })
+                let count = self.connections.count
+                if count == 0 {
+                    self.isCapturing = false
+                    self.streamLock.unlock()
+                    print("[Stream] No viewers connected; pausing capture")
+                    break
+                }
+                self.streamLock.unlock()
+
+                do {
+                    let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                    if let display = content.displays.first {
+                        let filter = SCContentFilter(display: display, excludingWindows: [])
+                        let config = SCStreamConfiguration()
+                        config.width = 960
+                        config.height = 540
+                        config.showsCursor = true
+
+                        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                        let mutableData = NSMutableData()
+                        if let dest = CGImageDestinationCreateWithData(mutableData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) {
+                            let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.45]
+                            CGImageDestinationAddImage(dest, image, options as CFDictionary)
+                            CGImageDestinationFinalize(dest)
+                        }
+
+                        let jpegData = mutableData as Data
+                        let header = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: \(jpegData.count)\r\n\r\n".data(using: .utf8)!
+                        let footer = "\r\n".data(using: .utf8)!
+                        var packet = Data()
+                        packet.append(header)
+                        packet.append(jpegData)
+                        packet.append(footer)
+
+                        self.streamLock.lock()
+                        for c in self.connections {
+                            c.send(content: packet, completion: .contentProcessed({ _ in }))
+                        }
+                        self.streamLock.unlock()
+                    }
+                } catch {
+                    // Screen recording permission may be required
+                }
+
+                try? await Task.sleep(nanoseconds: 50_000_000) // ~20 FPS
+            }
+        }
+    }
+}
+
+// MARK: - UDP Trackpad Server
 class TrackpadServer {
     private var listener: NWListener?
     private let port: UInt16 = 8080
@@ -429,6 +538,7 @@ class TrackpadServer {
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let server = TrackpadServer()
+    private let streamer = MJPEGStreamer()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -440,12 +550,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.title = "📱 Trackpad"
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Trackpad Server Active", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Trackpad & Stream Server Active", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem?.menu = menu
 
         server.start()
+        streamer.start()
     }
 }
 

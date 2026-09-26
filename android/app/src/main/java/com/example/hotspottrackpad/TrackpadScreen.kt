@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -22,7 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.abs
 
-enum class AppTab {
+enum class ActiveScreen {
     TRACKPAD,
     TABS,
     APPS
@@ -34,252 +35,49 @@ fun TrackpadScreen(
     connectedIp: String,
     onDisconnect: () -> Unit
 ) {
-    var currentTab by remember { mutableStateOf(AppTab.TRACKPAD) }
-    var textValue by remember { mutableStateOf(TextFieldValue("")) }
+    var activeScreen by remember { mutableStateOf(ActiveScreen.TRACKPAD) }
+    var isStreamEnabled by remember { mutableStateOf(false) }
     var showKeyboardBar by remember { mutableStateOf(false) }
+    var textValue by remember { mutableStateOf(TextFieldValue("")) }
     val snackbarHostState = remember { SnackbarHostState() }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = Color(0xFF121212)
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
-            // Header Bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF1E1E1E))
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .background(Color(0xFF00E676), shape = RoundedCornerShape(5.dp))
-                    )
-                    Text(
-                        text = connectedIp,
-                        color = Color(0xFF00E676),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { showKeyboardBar = !showKeyboardBar },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (showKeyboardBar) Color(0xFF2962FF) else Color(0xFF2C2C2C)
-                        ),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text(if (showKeyboardBar) "⌨️ Hide" else "⌨️ Type", fontSize = 12.sp, color = Color.White)
-                    }
-
-                    Button(
-                        onClick = onDisconnect,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text("Disconnect", fontSize = 12.sp, color = Color.White)
-                    }
-                }
-            }
-
-            // Tab Navigation (Trackpad vs Open Tabs vs Launch Apps)
-            TabRow(
-                selectedTabIndex = currentTab.ordinal,
-                containerColor = Color(0xFF181818),
-                contentColor = Color(0xFF2962FF)
-            ) {
-                Tab(
-                    selected = currentTab == AppTab.TRACKPAD,
-                    onClick = { currentTab = AppTab.TRACKPAD },
-                    text = {
-                        Text(
-                            "🖱️ Trackpad",
-                            color = if (currentTab == AppTab.TRACKPAD) Color(0xFF64B5F6) else Color(0xFF888888),
-                            fontSize = 12.sp
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0F0F0F))
+    ) {
+        // Main Screen Area
+        when (activeScreen) {
+            ActiveScreen.TRACKPAD -> {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // Background Live Mac Screen Stream (if toggled on)
+                    if (isStreamEnabled) {
+                        MjpegStreamView(
+                            serverIp = connectedIp,
+                            port = 8081,
+                            modifier = Modifier.fillMaxSize()
                         )
-                    }
-                )
-                Tab(
-                    selected = currentTab == AppTab.TABS,
-                    onClick = { currentTab = AppTab.TABS },
-                    text = {
-                        Text(
-                            "📑 Open Tabs",
-                            color = if (currentTab == AppTab.TABS) Color(0xFF64B5F6) else Color(0xFF888888),
-                            fontSize = 12.sp
-                        )
-                    }
-                )
-                Tab(
-                    selected = currentTab == AppTab.APPS,
-                    onClick = { currentTab = AppTab.APPS },
-                    text = {
-                        Text(
-                            "🚀 Apps",
-                            color = if (currentTab == AppTab.APPS) Color(0xFF64B5F6) else Color(0xFF888888),
-                            fontSize = 12.sp
-                        )
-                    }
-                )
-            }
-
-            // Real-time Automatic Keyboard Typing Section (when enabled)
-            if (showKeyboardBar) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // Real-time input field: sends every character or backspace immediately!
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF141414)),
+                            contentAlignment = Alignment.Center
                         ) {
-                            OutlinedTextField(
-                                value = textValue,
-                                onValueChange = { newVal ->
-                                    val oldText = textValue.text
-                                    val newText = newVal.text
-
-                                    if (newText.length > oldText.length) {
-                                        // User typed new characters: send them instantly to Mac
-                                        val added = newText.substring(oldText.length)
-                                        client.typeText(added)
-                                    } else if (newText.length < oldText.length) {
-                                        // User pressed backspace: send backspace instantly to Mac
-                                        val count = oldText.length - newText.length
-                                        repeat(count) {
-                                            client.sendKey("BACKSPACE")
-                                        }
-                                    }
-                                    textValue = newVal
-                                },
-                                placeholder = { Text("Type here (streams live to Mac)...", color = Color(0xFF777777)) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .onPreviewKeyEvent { event ->
-                                        if (event.type == KeyEventType.KeyDown && event.key == Key.Backspace && textValue.text.isEmpty()) {
-                                            client.sendKey("BACKSPACE")
-                                            true
-                                        } else false
-                                    },
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                                keyboardActions = KeyboardActions(onSend = {
-                                    client.sendKey("ENTER")
-                                }),
-                                singleLine = true,
-                                shape = RoundedCornerShape(8.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
-                                    focusedBorderColor = Color(0xFF00E676),
-                                    unfocusedBorderColor = Color(0xFF444444)
-                                )
+                            Text(
+                                text = "🖱️ Trackpad Active\n1 Finger: Move & Tap  |  2 Fingers: Scroll & Right-Click\nTap 📺 to Toggle Mac Screen Stream",
+                                color = Color(0xFF444444),
+                                fontSize = 13.sp,
+                                lineHeight = 20.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
-
-                            Button(
-                                onClick = { textValue = TextFieldValue("") },
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)
-                            ) {
-                                Text("Clear", fontSize = 12.sp, color = Color(0xFFAAAAAA))
-                            }
-                        }
-
-                        // Quick action keys: instantly send Enter, Del, Space, Tab, Esc
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Button(
-                                onClick = { client.sendKey("ENTER") },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
-                                contentPadding = PaddingValues(vertical = 8.dp)
-                            ) {
-                                Text("↵ Enter", fontSize = 11.sp, color = Color.White)
-                            }
-
-                            Button(
-                                onClick = { client.sendKey("BACKSPACE") },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
-                                contentPadding = PaddingValues(vertical = 8.dp)
-                            ) {
-                                Text("⌫ Del", fontSize = 11.sp, color = Color.White)
-                            }
-
-                            Button(
-                                onClick = { client.sendKey("SPACE") },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
-                                contentPadding = PaddingValues(vertical = 8.dp)
-                            ) {
-                                Text("␣ Space", fontSize = 11.sp, color = Color.White)
-                            }
-
-                            Button(
-                                onClick = { client.sendKey("TAB") },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
-                                contentPadding = PaddingValues(vertical = 8.dp)
-                            ) {
-                                Text("⇥ Tab", fontSize = 11.sp, color = Color.White)
-                            }
-
-                            Button(
-                                onClick = { client.sendKey("ESCAPE") },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
-                                contentPadding = PaddingValues(vertical = 8.dp)
-                            ) {
-                                Text("⎋ Esc", fontSize = 11.sp, color = Color.White)
-                            }
                         }
                     }
-                }
-            }
 
-            // Tab Content
-            when (currentTab) {
-                AppTab.TRACKPAD -> {
-                    // Trackpad Surface
+                    // Transparent Touch Layer for Trackpad Gestures
                     Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .padding(12.dp)
-                            .background(Color(0xFF1E1E1E), shape = RoundedCornerShape(12.dp))
+                            .fillMaxSize()
                             .pointerInput(Unit) {
                                 awaitEachGesture {
                                     awaitFirstDown(requireUnconsumed = false)
@@ -300,7 +98,7 @@ fun TrackpadScreen(
                                             val change = pointers[0].positionChange()
                                             totalMovement += abs(change.x) + abs(change.y)
                                             if (change.x != 0f || change.y != 0f) {
-                                                client.send("MOVE,${change.x * 1.6f},${change.y * 1.6f}")
+                                                client.send("MOVE,${change.x * 1.5f},${change.y * 1.5f}")
                                                 pointers[0].consume()
                                             }
                                         } else if (pointers.size >= 2) {
@@ -327,61 +125,292 @@ fun TrackpadScreen(
                                     }
                                 }
                             }
-                    ) {
-                        Text(
-                            text = "Touch Surface\n\n• 1 Finger: Move Cursor\n• 1 Finger Tap: Left Click\n• 2 Finger Drag: Scroll\n• 2 Finger Tap: Right Click",
-                            color = Color(0xFF666666),
-                            fontSize = 14.sp,
-                            lineHeight = 22.sp,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-                    }
+                    )
 
-                    // Bottom Physical Buttons
-                    Row(
+                    // Floating Left Click Button (Bottom Left)
+                    FloatingActionButton(
+                        onClick = { client.send("CLICK") },
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            .align(Alignment.BottomStart)
+                            .padding(start = 16.dp, bottom = 14.dp)
+                            .size(52.dp),
+                        shape = CircleShape,
+                        containerColor = Color(0xCC262626),
+                        contentColor = Color.White
                     ) {
-                        Button(
-                            onClick = { client.send("CLICK") },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(54.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C))
-                        ) {
-                            Text("Left Click", color = Color.White)
-                        }
+                        Text("L", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
 
-                        Button(
-                            onClick = { client.send("RCLICK") },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(54.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C))
-                        ) {
-                            Text("Right Click", color = Color.White)
-                        }
+                    // Floating Right Click Button (Bottom Right)
+                    FloatingActionButton(
+                        onClick = { client.send("RCLICK") },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 16.dp, bottom = 14.dp)
+                            .size(52.dp),
+                        shape = CircleShape,
+                        containerColor = Color(0xCC262626),
+                        contentColor = Color.White
+                    ) {
+                        Text("R", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
                 }
+            }
 
-                AppTab.TABS -> {
-                    TabsScreen(
-                        client = client,
-                        snackbarHostState = snackbarHostState
-                    )
-                }
+            ActiveScreen.TABS -> {
+                TabsScreen(
+                    client = client,
+                    snackbarHostState = snackbarHostState
+                )
+            }
 
-                AppTab.APPS -> {
-                    AppsScreen(
-                        client = client,
-                        snackbarHostState = snackbarHostState
-                    )
+            ActiveScreen.APPS -> {
+                AppsScreen(
+                    client = client,
+                    snackbarHostState = snackbarHostState
+                )
+            }
+        }
+
+        // Floating Real-Time Keyboard Input Bar (when enabled)
+        if (showKeyboardBar) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 10.dp, start = 48.dp, end = 48.dp)
+                    .fillMaxWidth(0.85f),
+                colors = CardDefaults.cardColors(containerColor = Color(0xEE1E1E1E)),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = textValue,
+                            onValueChange = { newVal ->
+                                val oldText = textValue.text
+                                val newText = newVal.text
+                                if (newText.length > oldText.length) {
+                                    val added = newText.substring(oldText.length)
+                                    client.typeText(added)
+                                } else if (newText.length < oldText.length) {
+                                    val count = oldText.length - newText.length
+                                    repeat(count) { client.sendKey("BACKSPACE") }
+                                }
+                                textValue = newVal
+                            },
+                            placeholder = { Text("Live typing streams to Mac...", color = Color(0xFF777777), fontSize = 12.sp) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.Backspace && textValue.text.isEmpty()) {
+                                        client.sendKey("BACKSPACE")
+                                        true
+                                    } else false
+                                },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { client.sendKey("ENTER") }),
+                            singleLine = true,
+                            shape = RoundedCornerShape(6.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = Color(0xFF00E676),
+                                unfocusedBorderColor = Color(0xFF444444)
+                            )
+                        )
+
+                        Button(
+                            onClick = { textValue = TextFieldValue("") },
+                            shape = RoundedCornerShape(6.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Text("Clear", fontSize = 11.sp, color = Color(0xFFAAAAAA))
+                        }
+
+                        Button(
+                            onClick = { showKeyboardBar = false },
+                            shape = RoundedCornerShape(6.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Text("✕", fontSize = 11.sp, color = Color.White)
+                        }
+                    }
+
+                    // Quick action keys row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Button(
+                            onClick = { client.sendKey("ENTER") },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(4.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
+                            contentPadding = PaddingValues(vertical = 4.dp)
+                        ) {
+                            Text("↵ Enter", fontSize = 10.sp, color = Color.White)
+                        }
+                        Button(
+                            onClick = { client.sendKey("BACKSPACE") },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(4.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
+                            contentPadding = PaddingValues(vertical = 4.dp)
+                        ) {
+                            Text("⌫ Del", fontSize = 10.sp, color = Color.White)
+                        }
+                        Button(
+                            onClick = { client.sendKey("SPACE") },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(4.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
+                            contentPadding = PaddingValues(vertical = 4.dp)
+                        ) {
+                            Text("␣ Space", fontSize = 10.sp, color = Color.White)
+                        }
+                        Button(
+                            onClick = { client.sendKey("TAB") },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(4.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
+                            contentPadding = PaddingValues(vertical = 4.dp)
+                        ) {
+                            Text("⇥ Tab", fontSize = 10.sp, color = Color.White)
+                        }
+                        Button(
+                            onClick = { client.sendKey("ESCAPE") },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(4.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
+                            contentPadding = PaddingValues(vertical = 4.dp)
+                        ) {
+                            Text("⎋ Esc", fontSize = 10.sp, color = Color.White)
+                        }
+                    }
                 }
             }
         }
+
+        // Floating Bottom Navigation Pill (Dock)
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 12.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xDD1C1C1C),
+            tonalElevation = 8.dp,
+            shadowElevation = 10.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Trackpad Button
+                FloatingDockButton(
+                    label = "🖱️ Trackpad",
+                    isSelected = activeScreen == ActiveScreen.TRACKPAD,
+                    onClick = { activeScreen = ActiveScreen.TRACKPAD }
+                )
+
+                // Stream Toggle Button
+                Button(
+                    onClick = {
+                        isStreamEnabled = !isStreamEnabled
+                        if (isStreamEnabled) activeScreen = ActiveScreen.TRACKPAD
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isStreamEnabled) Color(0xFF00C853) else Color(0xFF2C2C2C)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = if (isStreamEnabled) "📺 Stream: ON" else "📺 Stream",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                }
+
+                // Open Tabs Button
+                FloatingDockButton(
+                    label = "📑 Tabs",
+                    isSelected = activeScreen == ActiveScreen.TABS,
+                    onClick = { activeScreen = ActiveScreen.TABS }
+                )
+
+                // Apps Button
+                FloatingDockButton(
+                    label = "🚀 Apps",
+                    isSelected = activeScreen == ActiveScreen.APPS,
+                    onClick = { activeScreen = ActiveScreen.APPS }
+                )
+
+                // Keyboard Toggle Button
+                Button(
+                    onClick = { showKeyboardBar = !showKeyboardBar },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (showKeyboardBar) Color(0xFF2962FF) else Color(0xFF2C2C2C)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Text("⌨️ Type", fontSize = 11.sp, color = Color.White)
+                }
+
+                // Disconnect Button
+                Button(
+                    onClick = onDisconnect,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Text("🔌", fontSize = 11.sp, color = Color.White)
+                }
+            }
+        }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 16.dp)
+        )
+    }
+}
+
+@Composable
+private fun FloatingDockButton(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (isSelected) Color(0xFF2962FF) else Color(0xFF262626)
+        ),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+            color = Color.White
+        )
     }
 }

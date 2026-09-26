@@ -12,11 +12,13 @@
         android:label="Hotspot Trackpad"
         android:roundIcon="@android:drawable/ic_menu_compass"
         android:supportsRtl="true"
-        android:theme="@style/Theme.HotspotTrackpad">
+        android:theme="@style/Theme.HotspotTrackpad"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:screenOrientation="portrait"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize"
             android:theme="@style/Theme.HotspotTrackpad">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
