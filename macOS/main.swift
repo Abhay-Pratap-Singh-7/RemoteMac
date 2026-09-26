@@ -522,38 +522,44 @@ class MJPEGStreamer {
 
                 do {
                     let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-                    if let display = content.displays.first {
-                        let filter = SCContentFilter(display: display, excludingWindows: [])
-                        let config = SCStreamConfiguration()
-                        config.width = 960
-                        config.height = 540
-                        config.showsCursor = true
-
-                        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-                        let mutableData = NSMutableData()
-                        if let dest = CGImageDestinationCreateWithData(mutableData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) {
-                            let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.45]
-                            CGImageDestinationAddImage(dest, image, options as CFDictionary)
-                            CGImageDestinationFinalize(dest)
-                        }
-
-                        let jpegData = mutableData as Data
-                        self.onFrameCaptured?(jpegData)
-                        let header = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: \(jpegData.count)\r\n\r\n".data(using: .utf8)!
-                        let footer = "\r\n".data(using: .utf8)!
-                        var packet = Data()
-                        packet.append(header)
-                        packet.append(jpegData)
-                        packet.append(footer)
-
-                        self.streamLock.lock()
-                        for c in self.connections {
-                            c.send(content: packet, completion: .contentProcessed({ _ in }))
-                        }
-                        self.streamLock.unlock()
+                    guard let display = content.displays.first else {
+                        print("[Stream Warning] No active display found (is lid folded without external display?)")
+                        fflush(stdout)
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        continue
                     }
+                    let filter = SCContentFilter(display: display, excludingWindows: [])
+                    let config = SCStreamConfiguration()
+                    config.width = 960
+                    config.height = 540
+                    config.showsCursor = true
+
+                    let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                    let mutableData = NSMutableData()
+                    if let dest = CGImageDestinationCreateWithData(mutableData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) {
+                        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.45]
+                        CGImageDestinationAddImage(dest, image, options as CFDictionary)
+                        CGImageDestinationFinalize(dest)
+                    }
+
+                    let jpegData = mutableData as Data
+                    self.onFrameCaptured?(jpegData)
+                    let header = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: \(jpegData.count)\r\n\r\n".data(using: .utf8)!
+                    let footer = "\r\n".data(using: .utf8)!
+                    var packet = Data()
+                    packet.append(header)
+                    packet.append(jpegData)
+                    packet.append(footer)
+
+                    self.streamLock.lock()
+                    for c in self.connections {
+                        c.send(content: packet, completion: .contentProcessed({ _ in }))
+                    }
+                    self.streamLock.unlock()
                 } catch {
-                    // Screen recording permission may be required
+                    print("[Stream Capture Error] \(error.localizedDescription)")
+                    fflush(stdout)
+                    try? await Task.sleep(nanoseconds: 500_000_000)
                 }
 
                 try? await Task.sleep(nanoseconds: 50_000_000) // ~20 FPS
