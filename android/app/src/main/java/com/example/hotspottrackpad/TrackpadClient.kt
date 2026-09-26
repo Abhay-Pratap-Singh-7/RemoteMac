@@ -18,6 +18,13 @@ sealed class ConnectionStatus {
     data class Error(val message: String) : ConnectionStatus()
 }
 
+data class MacTab(
+    val appName: String,
+    val title: String,
+    val type: String,
+    val target: String
+)
+
 class TrackpadClient(private val context: Context, private val port: Int = 8080) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val sendChannel = Channel<String>(capacity = Channel.UNLIMITED)
@@ -28,6 +35,9 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
 
     private val _installedApps = MutableStateFlow<List<String>>(emptyList())
     val installedApps: StateFlow<List<String>> = _installedApps
+
+    private val _openTabs = MutableStateFlow<List<MacTab>>(emptyList())
+    val openTabs: StateFlow<List<MacTab>> = _openTabs
 
     private var targetIp: String? = null
 
@@ -44,7 +54,7 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
     }
 
     private suspend fun listenForIncomingPackets() {
-        val buffer = ByteArray(32768)
+        val buffer = ByteArray(65535)
         while (scope.isActive) {
             try {
                 val s = socket ?: break
@@ -64,9 +74,28 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
             targetIp = ip
             _status.value = ConnectionStatus.Connected(ip)
             fetchApps()
+            fetchOpenTabs()
         } else if (message.startsWith("APPS:")) {
             val appNames = message.removePrefix("APPS:").split(",").map { it.trim() }.filter { it.isNotEmpty() }
             _installedApps.value = appNames
+        } else if (message.startsWith("TABS:")) {
+            val raw = message.removePrefix("TABS:").trim()
+            if (raw.isNotEmpty()) {
+                val items = raw.split("###").mapNotNull { itemStr ->
+                    val p = itemStr.split("|||")
+                    if (p.size >= 4) {
+                        MacTab(
+                            appName = p[0],
+                            title = p[1],
+                            type = p[2],
+                            target = p.drop(2).joinToString("|||")
+                        )
+                    } else null
+                }
+                _openTabs.value = items
+            } else {
+                _openTabs.value = emptyList()
+            }
         }
     }
 
@@ -138,6 +167,14 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
         send("GET_APPS")
     }
 
+    fun fetchOpenTabs() {
+        send("GET_TABS")
+    }
+
+    fun switchTab(tab: MacTab) {
+        send("SWITCH_TAB,${tab.type},${tab.target}")
+    }
+
     fun launchApp(appName: String) {
         send("LAUNCH_APP,$appName")
     }
@@ -156,6 +193,7 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
         targetIp = null
         _status.value = ConnectionStatus.Disconnected
         _installedApps.value = emptyList()
+        _openTabs.value = emptyList()
     }
 
     fun send(message: String) {

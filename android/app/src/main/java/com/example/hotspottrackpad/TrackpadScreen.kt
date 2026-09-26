@@ -5,21 +5,26 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 enum class AppTab {
     TRACKPAD,
+    TABS,
     APPS
 }
 
@@ -30,10 +35,9 @@ fun TrackpadScreen(
     onDisconnect: () -> Unit
 ) {
     var currentTab by remember { mutableStateOf(AppTab.TRACKPAD) }
-    var textInput by remember { mutableStateOf("") }
+    var textValue by remember { mutableStateOf(TextFieldValue("")) }
     var showKeyboardBar by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -93,7 +97,7 @@ fun TrackpadScreen(
                 }
             }
 
-            // Tab Navigation (Trackpad vs Apps)
+            // Tab Navigation (Trackpad vs Open Tabs vs Launch Apps)
             TabRow(
                 selectedTabIndex = currentTab.ordinal,
                 containerColor = Color(0xFF181818),
@@ -105,7 +109,19 @@ fun TrackpadScreen(
                     text = {
                         Text(
                             "🖱️ Trackpad",
-                            color = if (currentTab == AppTab.TRACKPAD) Color(0xFF64B5F6) else Color(0xFF888888)
+                            color = if (currentTab == AppTab.TRACKPAD) Color(0xFF64B5F6) else Color(0xFF888888),
+                            fontSize = 12.sp
+                        )
+                    }
+                )
+                Tab(
+                    selected = currentTab == AppTab.TABS,
+                    onClick = { currentTab = AppTab.TABS },
+                    text = {
+                        Text(
+                            "📑 Open Tabs",
+                            color = if (currentTab == AppTab.TABS) Color(0xFF64B5F6) else Color(0xFF888888),
+                            fontSize = 12.sp
                         )
                     }
                 )
@@ -114,14 +130,15 @@ fun TrackpadScreen(
                     onClick = { currentTab = AppTab.APPS },
                     text = {
                         Text(
-                            "🚀 Mac Apps",
-                            color = if (currentTab == AppTab.APPS) Color(0xFF64B5F6) else Color(0xFF888888)
+                            "🚀 Apps",
+                            color = if (currentTab == AppTab.APPS) Color(0xFF64B5F6) else Color(0xFF888888),
+                            fontSize = 12.sp
                         )
                     }
                 )
             }
 
-            // Keyboard Typing Section (when enabled)
+            // Real-time Automatic Keyboard Typing Section (when enabled)
             if (showKeyboardBar) {
                 Card(
                     modifier = Modifier
@@ -136,45 +153,65 @@ fun TrackpadScreen(
                             .padding(10.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        // Real-time input field: sends every character or backspace immediately!
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             OutlinedTextField(
-                                value = textInput,
-                                onValueChange = { textInput = it },
-                                placeholder = { Text("Type text to send to Mac...", color = Color(0xFF777777)) },
-                                modifier = Modifier.weight(1f),
+                                value = textValue,
+                                onValueChange = { newVal ->
+                                    val oldText = textValue.text
+                                    val newText = newVal.text
+
+                                    if (newText.length > oldText.length) {
+                                        // User typed new characters: send them instantly to Mac
+                                        val added = newText.substring(oldText.length)
+                                        client.typeText(added)
+                                    } else if (newText.length < oldText.length) {
+                                        // User pressed backspace: send backspace instantly to Mac
+                                        val count = oldText.length - newText.length
+                                        repeat(count) {
+                                            client.sendKey("BACKSPACE")
+                                        }
+                                    }
+                                    textValue = newVal
+                                },
+                                placeholder = { Text("Type here (streams live to Mac)...", color = Color(0xFF777777)) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .onPreviewKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown && event.key == Key.Backspace && textValue.text.isEmpty()) {
+                                            client.sendKey("BACKSPACE")
+                                            true
+                                        } else false
+                                    },
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                                keyboardActions = KeyboardActions(onSend = {
+                                    client.sendKey("ENTER")
+                                }),
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedTextColor = Color.White,
                                     unfocusedTextColor = Color.White,
-                                    focusedBorderColor = Color(0xFF2962FF),
+                                    focusedBorderColor = Color(0xFF00E676),
                                     unfocusedBorderColor = Color(0xFF444444)
                                 )
                             )
 
                             Button(
-                                onClick = {
-                                    if (textInput.isNotEmpty()) {
-                                        client.typeText(textInput)
-                                        scope.launch {
-                                            snackbarHostState.showSnackbar("Typed on Mac: $textInput")
-                                        }
-                                        textInput = ""
-                                    }
-                                },
+                                onClick = { textValue = TextFieldValue("") },
                                 shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853)),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)
                             ) {
-                                Text("Send", color = Color.White)
+                                Text("Clear", fontSize = 12.sp, color = Color(0xFFAAAAAA))
                             }
                         }
 
-                        // Quick action keys
+                        // Quick action keys: instantly send Enter, Del, Space, Tab, Esc
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -300,7 +337,7 @@ fun TrackpadScreen(
                         )
                     }
 
-                    // Physical Buttons at bottom
+                    // Bottom Physical Buttons
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -329,6 +366,13 @@ fun TrackpadScreen(
                             Text("Right Click", color = Color.White)
                         }
                     }
+                }
+
+                AppTab.TABS -> {
+                    TabsScreen(
+                        client = client,
+                        snackbarHostState = snackbarHostState
+                    )
                 }
 
                 AppTab.APPS -> {
