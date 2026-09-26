@@ -184,6 +184,11 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
         send("ACTION,$action")
     }
 
+    fun executeAiCommand(type: String, command: String) {
+        val b64 = Base64.encodeToString(command.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        send("AI_EXEC,$type,$b64")
+    }
+
     fun typeText(text: String) {
         if (text.isEmpty()) return
         val b64 = Base64.encodeToString(text.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)

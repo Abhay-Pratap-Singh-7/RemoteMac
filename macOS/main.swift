@@ -250,6 +250,35 @@ func runAppleScript(_ script: String) {
     try? task.run()
 }
 
+func executeAICommand(type: String, command: String) {
+    print("[AI Execution] Running [\(type)]: \(command)")
+    let task = Process()
+    switch type.lowercased() {
+    case "shell":
+        task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        task.arguments = ["-c", command]
+    case "applescript":
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", command]
+    case "open_url":
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = [command]
+    case "launch_app":
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-a", command]
+    default:
+        task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        task.arguments = ["-c", command]
+    }
+    do {
+        try task.run()
+        task.waitUntilExit()
+        print("[AI Execution] Finished with code \(task.terminationStatus)")
+    } catch {
+        print("[AI Execution] Failed: \(error.localizedDescription)")
+    }
+}
+
 func handleMacAction(_ action: String) {
     switch action {
     case "MISSION_CONTROL":
@@ -520,6 +549,21 @@ class TrackpadServer {
             return
         }
 
+        if message.hasPrefix("AI_EXEC,") {
+            let rest = String(message.dropFirst("AI_EXEC,".count))
+            let parts = rest.components(separatedBy: ",")
+            if parts.count >= 2 {
+                let type = parts[0]
+                let b64 = parts.dropFirst().joined(separator: ",")
+                if let data = Data(base64Encoded: b64), let cmd = String(data: data, encoding: .utf8) {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        executeAICommand(type: type, command: cmd)
+                    }
+                }
+            }
+            return
+        }
+
         if message.hasPrefix("TYPE_B64,") {
             let b64 = String(message.dropFirst("TYPE_B64,".count))
             if let data = Data(base64Encoded: b64), let text = String(data: data, encoding: .utf8) {
@@ -612,7 +656,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.title = "📱 Trackpad"
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Trackpad & Stream Server Active", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Trackpad, Stream & AI Server Active", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem?.menu = menu

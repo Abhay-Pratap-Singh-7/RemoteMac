@@ -21,7 +21,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 @Composable
@@ -34,10 +33,10 @@ fun TrackpadScreen(
     var showTabsOverlay by remember { mutableStateOf(false) }
     var showActionsOverlay by remember { mutableStateOf(false) }
     var showAppsOverlay by remember { mutableStateOf(false) }
+    var showAiOverlay by remember { mutableStateOf(false) }
     var showKeyboardBar by remember { mutableStateOf(false) }
     var textValue by remember { mutableStateOf(TextFieldValue("")) }
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
 
     Row(
         modifier = Modifier
@@ -58,11 +57,12 @@ fun TrackpadScreen(
             SideDockButton(
                 icon = "🖱️",
                 label = "Pad",
-                isSelected = !showTabsOverlay && !showAppsOverlay && !showActionsOverlay,
+                isSelected = !showTabsOverlay && !showAppsOverlay && !showActionsOverlay && !showAiOverlay,
                 onClick = {
                     showTabsOverlay = false
                     showAppsOverlay = false
                     showActionsOverlay = false
+                    showAiOverlay = false
                 }
             )
 
@@ -86,6 +86,7 @@ fun TrackpadScreen(
                     if (showActionsOverlay) {
                         showTabsOverlay = false
                         showAppsOverlay = false
+                        showAiOverlay = false
                     }
                 }
             )
@@ -186,6 +187,19 @@ fun TrackpadScreen(
                 QuickActionsSheet(
                     client = client,
                     onDismiss = { showActionsOverlay = false }
+                )
+            }
+
+            // Slide-out Right Overlay: AI Assistant Sheet
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showAiOverlay,
+                enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                AiAssistantSheet(
+                    client = client,
+                    onDismiss = { showAiOverlay = false }
                 )
             }
 
@@ -382,7 +396,7 @@ fun TrackpadScreen(
             )
         }
 
-        // RIGHT VERTICAL DOCK: Tabs, Apps, Type, Disconnect
+        // RIGHT VERTICAL DOCK: AI Assistant, Tabs, Apps, Type, Disconnect
         Column(
             modifier = Modifier
                 .width(64.dp)
@@ -392,7 +406,23 @@ fun TrackpadScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Tabs Button (Shifted to right!)
+            // AI Assistant Button
+            SideDockButton(
+                icon = "✨",
+                label = "AI Task",
+                isSelected = showAiOverlay,
+                activeColor = Color(0xFF7C4DFF),
+                onClick = {
+                    showAiOverlay = !showAiOverlay
+                    if (showAiOverlay) {
+                        showTabsOverlay = false
+                        showAppsOverlay = false
+                        showActionsOverlay = false
+                    }
+                }
+            )
+
+            // Tabs Button
             SideDockButton(
                 icon = "📑",
                 label = "Tabs",
@@ -403,6 +433,7 @@ fun TrackpadScreen(
                     if (showTabsOverlay) {
                         showAppsOverlay = false
                         showActionsOverlay = false
+                        showAiOverlay = false
                     }
                 }
             )
@@ -412,12 +443,13 @@ fun TrackpadScreen(
                 icon = "🚀",
                 label = "Apps",
                 isSelected = showAppsOverlay,
-                activeColor = Color(0xFF7B1FA2),
+                activeColor = Color(0xFFAB47BC),
                 onClick = {
                     showAppsOverlay = !showAppsOverlay
                     if (showAppsOverlay) {
                         showTabsOverlay = false
                         showActionsOverlay = false
+                        showAiOverlay = false
                     }
                 }
             )
@@ -475,7 +507,7 @@ private fun SideDockButton(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = label,
-                fontSize = 9.sp,
+                fontSize = 8.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                 color = Color.White,
                 maxLines = 1
