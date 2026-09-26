@@ -530,14 +530,16 @@ class MJPEGStreamer {
                     }
                     let filter = SCContentFilter(display: display, excludingWindows: [])
                     let config = SCStreamConfiguration()
-                    config.width = 640
-                    config.height = 360
+                    let targetWidth = 1280
+                    let targetHeight = Int(Double(targetWidth) * (Double(display.height) / Double(display.width)))
+                    config.width = targetWidth
+                    config.height = targetHeight
                     config.showsCursor = true
 
                     let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
                     let mutableData = NSMutableData()
                     if let dest = CGImageDestinationCreateWithData(mutableData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) {
-                        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.28]
+                        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.58]
                         CGImageDestinationAddImage(dest, image, options as CFDictionary)
                         CGImageDestinationFinalize(dest)
                     }

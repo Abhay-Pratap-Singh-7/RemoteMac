@@ -45,7 +45,7 @@ fun MjpegStreamView(
 
     val decodeOptions = remember {
         BitmapFactory.Options().apply {
-            inPreferredConfig = Bitmap.Config.RGB_565
+            inPreferredConfig = Bitmap.Config.ARGB_8888
         }
     }
 
