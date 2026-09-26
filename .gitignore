@@ -1,0 +1,7 @@
+.DS_Store
+MacTrackpadServer
+build/
+.gradle/
+*.iml
+.idea/
+local.properties
