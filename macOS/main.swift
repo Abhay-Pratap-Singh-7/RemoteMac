@@ -44,6 +44,24 @@ func getInstalledApps() -> [String] {
     return apps.sorted()
 }
 
+func getStoredApiKey() -> String {
+    let keyPath = "/Users/abhay/Downloads/HotspotTrackpad/macOS/gemini_key.txt"
+    if let key = try? String(contentsOfFile: keyPath, encoding: .utf8) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+    }
+    if let envKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"], !envKey.isEmpty {
+        return envKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return ""
+}
+
+func saveStoredApiKey(_ key: String) {
+    let keyPath = "/Users/abhay/Downloads/HotspotTrackpad/macOS/gemini_key.txt"
+    try? key.trimmingCharacters(in: .whitespacesAndNewlines).write(toFile: keyPath, atomically: true, encoding: .utf8)
+    print("[AI] Gemini API Key saved to \(keyPath)")
+}
+
 struct CachedTab {
     let id: Int
     let type: String
@@ -279,6 +297,77 @@ func executeAICommand(type: String, command: String) {
     }
 }
 
+func callGeminiAndExecute(prompt: String, completion: @escaping (Bool, String, String) -> Void) {
+    let apiKey = getStoredApiKey()
+    guard !apiKey.isEmpty else {
+        completion(false, "Gemini API key not found on Mac. Please save your key in gemini_key.txt", "")
+        return
+    }
+
+    let candidateUrls = [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\(apiKey)",
+        "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=\(apiKey)",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=\(apiKey)",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=\(apiKey)"
+    ]
+
+    Task {
+        var lastError = ""
+        for urlStr in candidateUrls {
+            guard let url = URL(string: urlStr) else { continue }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+            let payload: [String: Any] = [
+                "contents": [
+                    [
+                        "parts": [
+                            ["text": "You are a macOS automation agent. Convert this user task into an executable macOS command: \"\(prompt)\". Respond ONLY with valid JSON: {\"type\": \"shell\"|\"applescript\"|\"open_url\"|\"launch_app\", \"command\": \"...\", \"summary\": \"...\"}"]
+                        ]
+                    ]
+                ],
+                "generationConfig": [
+                    "response_mime_type": "application/json",
+                    "temperature": 0.1
+                ]
+            ]
+
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: payload) else { continue }
+            request.httpBody = jsonData
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                if let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) {
+                    if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let candidates = root["candidates"] as? [[String: Any]],
+                       let first = candidates.first,
+                       let content = first["content"] as? [String: Any],
+                       let parts = content["parts"] as? [[String: Any]],
+                       let textPart = parts.first?["text"] as? String,
+                       let textData = textPart.data(using: .utf8),
+                       let cmdJson = try? JSONSerialization.jsonObject(with: textData) as? [String: Any],
+                       let type = cmdJson["type"] as? String,
+                       let command = cmdJson["command"] as? String {
+                        let summary = (cmdJson["summary"] as? String) ?? "Executed task"
+                        DispatchQueue.main.async {
+                            executeAICommand(type: type, command: command)
+                        }
+                        completion(true, summary, command)
+                        return
+                    }
+                } else if let httpResp = response as? HTTPURLResponse {
+                    let errBody = String(data: data, encoding: .utf8) ?? ""
+                    lastError = "HTTP \(httpResp.statusCode): \(errBody.prefix(80))"
+                }
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+        completion(false, lastError.isEmpty ? "Failed to query Gemini model" : lastError, "")
+    }
+}
+
 func handleMacAction(_ action: String) {
     switch action {
     case "MISSION_CONTROL":
@@ -287,23 +376,23 @@ func handleMacAction(_ action: String) {
         task.arguments = ["-a", "Mission Control"]
         try? task.run()
     case "SPOTLIGHT":
-        sendKeyCombo(virtualKey: 49, flags: .maskCommand) // Cmd + Space
+        sendKeyCombo(virtualKey: 49, flags: .maskCommand)
     case "DESKTOP":
-        sendKeyCombo(virtualKey: 103, flags: []) // F11
+        sendKeyCombo(virtualKey: 103, flags: [])
     case "CLOSE_WINDOW":
-        sendKeyCombo(virtualKey: 13, flags: .maskCommand) // Cmd + W
+        sendKeyCombo(virtualKey: 13, flags: .maskCommand)
     case "QUIT_APP":
-        sendKeyCombo(virtualKey: 12, flags: .maskCommand) // Cmd + Q
+        sendKeyCombo(virtualKey: 12, flags: .maskCommand)
     case "COPY":
-        sendKeyCombo(virtualKey: 8, flags: .maskCommand) // Cmd + C
+        sendKeyCombo(virtualKey: 8, flags: .maskCommand)
     case "PASTE":
-        sendKeyCombo(virtualKey: 9, flags: .maskCommand) // Cmd + V
+        sendKeyCombo(virtualKey: 9, flags: .maskCommand)
     case "UNDO":
-        sendKeyCombo(virtualKey: 6, flags: .maskCommand) // Cmd + Z
+        sendKeyCombo(virtualKey: 6, flags: .maskCommand)
     case "FULLSCREEN":
-        sendKeyCombo(virtualKey: 3, flags: [.maskCommand, .maskControl]) // Ctrl + Cmd + F
+        sendKeyCombo(virtualKey: 3, flags: [.maskCommand, .maskControl])
     case "APP_SWITCHER":
-        sendKeyCombo(virtualKey: 48, flags: .maskCommand) // Cmd + Tab
+        sendKeyCombo(virtualKey: 48, flags: .maskCommand)
     case "VOL_UP":
         runAppleScript("set volume output volume ((output volume of (get volume settings)) + 6)")
     case "VOL_DOWN":
@@ -471,7 +560,12 @@ class TrackpadServer {
                     print("   ➜ \(ip)")
                 }
             }
-            print(" Enter one of the above IPs in the Android app")
+            let key = getStoredApiKey()
+            if key.isEmpty {
+                print(" [AI] Gemini Key: Not set (Paste in gemini_key.txt or via Android app)")
+            } else {
+                print(" [AI] Gemini Key: Configured (Server-side)")
+            }
             print("========================================")
             fflush(stdout)
         } catch {
@@ -494,15 +588,53 @@ class TrackpadServer {
     private func handle(message: String, connection: NWConnection) {
         if message == "DISCOVER_SERVER" || message == "CONNECT" || message == "PING" {
             print("[UDP] Handshake '\(message)' received from \(connection.endpoint)")
-            let response = "CONNECTED".data(using: .utf8)
-            connection.send(content: response, completion: .contentProcessed({ error in
-                if let error = error {
-                    print("[UDP] Failed to reply: \(error)")
-                } else {
-                    print("[UDP] Replied 'CONNECTED' to \(connection.endpoint)")
-                }
-            }))
+            let hasKey = !getStoredApiKey().isEmpty
+            let response = "CONNECTED,\(hasKey ? "KEY_SET" : "NO_KEY")".data(using: .utf8)
+            connection.send(content: response, completion: .contentProcessed({ _ in }))
             fflush(stdout)
+            return
+        }
+
+        if message == "CHECK_AI_KEY" {
+            let hasKey = !getStoredApiKey().isEmpty
+            let response = "AI_KEY_STATUS,\(hasKey ? "CONFIGURED" : "MISSING")".data(using: .utf8)
+            connection.send(content: response, completion: .contentProcessed({ _ in }))
+            return
+        }
+
+        if message.hasPrefix("SET_AI_KEY,") {
+            let key = String(message.dropFirst("SET_AI_KEY,".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            saveStoredApiKey(key)
+            let statusResp = "AI_KEY_STATUS,CONFIGURED".data(using: .utf8)
+            connection.send(content: statusResp, completion: .contentProcessed({ _ in }))
+            let response = "AI_RESULT,SUCCESS,API Key Saved on Mac,".data(using: .utf8)
+            connection.send(content: response, completion: .contentProcessed({ _ in }))
+            return
+        }
+
+        if message.hasPrefix("AI_EXEC,") {
+            let rest = String(message.dropFirst("AI_EXEC,".count))
+            let parts = rest.components(separatedBy: ",")
+            if parts.count >= 2, let data = Data(base64Encoded: parts[1]), let cmd = String(data: data, encoding: .utf8) {
+                DispatchQueue.main.async {
+                    executeAICommand(type: parts[0], command: cmd)
+                }
+            }
+            return
+        }
+
+        if message.hasPrefix("AI_TASK_B64,") {
+            let b64 = String(message.dropFirst("AI_TASK_B64,".count))
+            if let data = Data(base64Encoded: b64), let prompt = String(data: data, encoding: .utf8) {
+                print("[AI Task] Received prompt: \"\(prompt)\"")
+                callGeminiAndExecute(prompt: prompt) { success, summary, command in
+                    let status = success ? "SUCCESS" : "ERROR"
+                    let safeSummary = summary.replacingOccurrences(of: ",", with: ";")
+                    let safeCmd = command.replacingOccurrences(of: ",", with: ";")
+                    let reply = "AI_RESULT,\(status),\(safeSummary),\(safeCmd)".data(using: .utf8)
+                    connection.send(content: reply, completion: .contentProcessed({ _ in }))
+                }
+            }
             return
         }
 
@@ -518,7 +650,6 @@ class TrackpadServer {
                 let tabsStr = refreshOpenWindowsAndTabs()
                 let response = "TABS:\(tabsStr)".data(using: .utf8)
                 connection.send(content: response, completion: .contentProcessed({ _ in }))
-                print("[UDP] Sent \(cachedTabs.count) tabs to \(connection.endpoint)")
             }
             return
         }
@@ -545,21 +676,6 @@ class TrackpadServer {
             let action = String(message.dropFirst("ACTION,".count))
             DispatchQueue.main.async {
                 handleMacAction(action)
-            }
-            return
-        }
-
-        if message.hasPrefix("AI_EXEC,") {
-            let rest = String(message.dropFirst("AI_EXEC,".count))
-            let parts = rest.components(separatedBy: ",")
-            if parts.count >= 2 {
-                let type = parts[0]
-                let b64 = parts.dropFirst().joined(separator: ",")
-                if let data = Data(base64Encoded: b64), let cmd = String(data: data, encoding: .utf8) {
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        executeAICommand(type: type, command: cmd)
-                    }
-                }
             }
             return
         }

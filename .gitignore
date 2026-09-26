@@ -5,3 +5,4 @@ build/
 *.iml
 .idea/
 local.properties
+gemini_key.txt

@@ -25,6 +25,13 @@ data class MacTab(
     val type: String
 )
 
+data class AiTaskResult(
+    val success: Boolean,
+    val summary: String,
+    val command: String,
+    val error: String?
+)
+
 class TrackpadClient(private val context: Context, private val port: Int = 8080) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val sendChannel = Channel<String>(capacity = Channel.UNLIMITED)
@@ -38,6 +45,15 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
 
     private val _openTabs = MutableStateFlow<List<MacTab>>(emptyList())
     val openTabs: StateFlow<List<MacTab>> = _openTabs
+
+    private val _isAiKeyConfigured = MutableStateFlow(false)
+    val isAiKeyConfigured: StateFlow<Boolean> = _isAiKeyConfigured
+
+    private val _aiResult = MutableStateFlow<AiTaskResult?>(null)
+    val aiResult: StateFlow<AiTaskResult?> = _aiResult
+
+    private val _isAiRunning = MutableStateFlow(false)
+    val isAiRunning: StateFlow<Boolean> = _isAiRunning
 
     private var targetIp: String? = null
 
@@ -69,12 +85,32 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
     }
 
     private fun handleIncomingMessage(message: String, fromAddress: InetAddress) {
-        if (message == "CONNECTED") {
+        if (message.startsWith("CONNECTED")) {
             val ip = fromAddress.hostAddress ?: targetIp ?: return
             targetIp = ip
             _status.value = ConnectionStatus.Connected(ip)
+            if (message.contains("KEY_SET")) {
+                _isAiKeyConfigured.value = true
+            } else if (message.contains("NO_KEY")) {
+                _isAiKeyConfigured.value = false
+            }
+            checkAiKey()
             fetchApps()
             fetchOpenTabs()
+        } else if (message.startsWith("AI_KEY_STATUS,")) {
+            val status = message.removePrefix("AI_KEY_STATUS,").trim()
+            _isAiKeyConfigured.value = (status == "CONFIGURED")
+        } else if (message.startsWith("AI_RESULT,")) {
+            _isAiRunning.value = false
+            val parts = message.split(",")
+            val status = parts.getOrNull(1) ?: ""
+            val summary = parts.getOrNull(2)?.replace(";", ",") ?: ""
+            val cmd = parts.getOrNull(3)?.replace(";", ",") ?: ""
+            if (status == "SUCCESS") {
+                _aiResult.value = AiTaskResult(true, summary, cmd, null)
+            } else {
+                _aiResult.value = AiTaskResult(false, "", "", summary.ifEmpty { "AI execution error on Mac" })
+            }
         } else if (message.startsWith("APPS:")) {
             val appNames = message.removePrefix("APPS:").split(",").map { it.trim() }.filter { it.isNotEmpty() }
             _installedApps.value = appNames
@@ -182,6 +218,21 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
 
     fun sendAction(action: String) {
         send("ACTION,$action")
+    }
+
+    fun checkAiKey() {
+        send("CHECK_AI_KEY")
+    }
+
+    fun setServerAiKey(key: String) {
+        send("SET_AI_KEY,${key.trim()}")
+    }
+
+    fun sendAiTask(prompt: String) {
+        _isAiRunning.value = true
+        _aiResult.value = null
+        val b64 = Base64.encodeToString(prompt.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        send("AI_TASK_B64,$b64")
     }
 
     fun executeAiCommand(type: String, command: String) {
