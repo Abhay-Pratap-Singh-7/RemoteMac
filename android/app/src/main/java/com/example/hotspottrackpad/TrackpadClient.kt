@@ -2,6 +2,7 @@ package com.example.hotspottrackpad
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import android.util.Base64
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -9,7 +10,6 @@ import kotlinx.coroutines.flow.StateFlow
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
-import java.net.SocketTimeoutException
 
 sealed class ConnectionStatus {
     object Disconnected : ConnectionStatus()
@@ -26,18 +26,47 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
     private val _status = MutableStateFlow<ConnectionStatus>(ConnectionStatus.Disconnected)
     val status: StateFlow<ConnectionStatus> = _status
 
+    private val _installedApps = MutableStateFlow<List<String>>(emptyList())
+    val installedApps: StateFlow<List<String>> = _installedApps
+
     private var targetIp: String? = null
 
     init {
         scope.launch {
             try {
-                socket = DatagramSocket().apply {
-                    broadcast = true
-                }
+                socket = DatagramSocket().apply { broadcast = true }
                 launch { processOutgoingQueue() }
+                launch { listenForIncomingPackets() }
             } catch (e: Exception) {
                 _status.value = ConnectionStatus.Error("Failed to init UDP socket: ${e.localizedMessage}")
             }
+        }
+    }
+
+    private suspend fun listenForIncomingPackets() {
+        val buffer = ByteArray(32768)
+        while (scope.isActive) {
+            try {
+                val s = socket ?: break
+                val packet = DatagramPacket(buffer, buffer.size)
+                s.receive(packet)
+                val reply = String(packet.data, 0, packet.length, Charsets.UTF_8).trim()
+                handleIncomingMessage(reply, packet.address)
+            } catch (e: Exception) {
+                if (!scope.isActive) break
+            }
+        }
+    }
+
+    private fun handleIncomingMessage(message: String, fromAddress: InetAddress) {
+        if (message == "CONNECTED") {
+            val ip = fromAddress.hostAddress ?: targetIp ?: return
+            targetIp = ip
+            _status.value = ConnectionStatus.Connected(ip)
+            fetchApps()
+        } else if (message.startsWith("APPS:")) {
+            val appNames = message.removePrefix("APPS:").split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            _installedApps.value = appNames
         }
     }
 
@@ -52,37 +81,24 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
                     acquire()
                 }
 
-                val socket = socket ?: DatagramSocket().also { this@TrackpadClient.socket = it }
                 val sendData = "DISCOVER_SERVER".toByteArray()
                 val broadcastAddr = InetAddress.getByName("255.255.255.255")
-                val sendPacket = DatagramPacket(sendData, sendData.size, broadcastAddr, port)
+                val packet = DatagramPacket(sendData, sendData.size, broadcastAddr, port)
+                socket?.send(packet)
 
-                socket.send(sendPacket)
-
-                val buffer = ByteArray(1024)
-                val receivePacket = DatagramPacket(buffer, buffer.size)
-                socket.soTimeout = 2500
-                socket.receive(receivePacket)
-
-                val reply = String(receivePacket.data, 0, receivePacket.length)
-                if (reply.contains("CONNECTED")) {
-                    val foundIp = receivePacket.address.hostAddress ?: ""
-                    targetIp = foundIp
-                    _status.value = ConnectionStatus.Connected(foundIp)
-                } else {
-                    _status.value = ConnectionStatus.Error("Invalid response from server: $reply")
+                withTimeout(3000) {
+                    while (status.value !is ConnectionStatus.Connected) {
+                        delay(100)
+                    }
                 }
-            } catch (e: SocketTimeoutException) {
-                _status.value = ConnectionStatus.Error("No Mac discovered via broadcast. Enter Mac IP manually.")
+            } catch (e: TimeoutCancellationException) {
+                if (status.value !is ConnectionStatus.Connected) {
+                    _status.value = ConnectionStatus.Error("No Mac discovered via broadcast. Enter Mac IP manually.")
+                }
             } catch (e: Exception) {
                 _status.value = ConnectionStatus.Error("Discovery error: ${e.localizedMessage}")
             } finally {
-                try {
-                    socket?.soTimeout = 0
-                } catch (_: Exception) {}
-                try {
-                    lock?.release()
-                } catch (_: Exception) {}
+                try { lock?.release() } catch (_: Exception) {}
             }
         }
     }
@@ -97,40 +113,49 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
         scope.launch {
             _status.value = ConnectionStatus.Connecting("Connecting to $trimmedIp...")
             try {
-                val socket = socket ?: DatagramSocket().also { this@TrackpadClient.socket = it }
-                val address = InetAddress.getByName(trimmedIp)
+                targetIp = trimmedIp
                 val sendData = "CONNECT".toByteArray()
-                val sendPacket = DatagramPacket(sendData, sendData.size, address, port)
+                val address = InetAddress.getByName(trimmedIp)
+                val packet = DatagramPacket(sendData, sendData.size, address, port)
+                socket?.send(packet)
 
-                socket.send(sendPacket)
-
-                val buffer = ByteArray(1024)
-                val receivePacket = DatagramPacket(buffer, buffer.size)
-                socket.soTimeout = 3000
-                socket.receive(receivePacket)
-
-                val reply = String(receivePacket.data, 0, receivePacket.length)
-                if (reply.contains("CONNECTED")) {
-                    targetIp = trimmedIp
-                    _status.value = ConnectionStatus.Connected(trimmedIp)
-                } else {
-                    _status.value = ConnectionStatus.Error("Unexpected response: $reply")
+                withTimeout(3500) {
+                    while (status.value !is ConnectionStatus.Connected) {
+                        delay(100)
+                    }
                 }
-            } catch (e: SocketTimeoutException) {
-                _status.value = ConnectionStatus.Error("Connection timed out. Check that MacTrackpadServer is running on $trimmedIp.")
+            } catch (e: TimeoutCancellationException) {
+                if (status.value !is ConnectionStatus.Connected) {
+                    _status.value = ConnectionStatus.Error("Connection timed out. Check that MacTrackpadServer is running on $trimmedIp.")
+                }
             } catch (e: Exception) {
                 _status.value = ConnectionStatus.Error("Connection failed: ${e.localizedMessage}")
-            } finally {
-                try {
-                    socket?.soTimeout = 0
-                } catch (_: Exception) {}
             }
         }
+    }
+
+    fun fetchApps() {
+        send("GET_APPS")
+    }
+
+    fun launchApp(appName: String) {
+        send("LAUNCH_APP,$appName")
+    }
+
+    fun typeText(text: String) {
+        if (text.isEmpty()) return
+        val b64 = Base64.encodeToString(text.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        send("TYPE_B64,$b64")
+    }
+
+    fun sendKey(key: String) {
+        send("KEY,$key")
     }
 
     fun disconnect() {
         targetIp = null
         _status.value = ConnectionStatus.Disconnected
+        _installedApps.value = emptyList()
     }
 
     fun send(message: String) {

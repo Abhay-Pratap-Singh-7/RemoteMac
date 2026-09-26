@@ -26,6 +26,54 @@ func getLocalIPAddresses() -> [String] {
     return addresses
 }
 
+func getInstalledApps() -> [String] {
+    let fm = FileManager.default
+    let dirs = ["/Applications", "/System/Applications", "/System/Applications/Utilities"]
+    var apps = Set<String>()
+    for dir in dirs {
+        if let items = try? fm.contentsOfDirectory(atPath: dir) {
+            for item in items where item.hasSuffix(".app") {
+                let name = (item as NSString).deletingPathExtension
+                apps.insert(name)
+            }
+        }
+    }
+    return apps.sorted()
+}
+
+func launchApp(name: String) {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    task.arguments = ["-a", name]
+    do {
+        try task.run()
+        print("[App] Successfully launched: \(name)")
+    } catch {
+        print("[App] Failed to launch \(name): \(error.localizedDescription)")
+    }
+}
+
+func typeText(_ text: String) {
+    let source = CGEventSource(stateID: .hidSystemState)
+    for char in text.utf16 {
+        var code = char
+        let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)
+        down?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &code)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+        up?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &code)
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
+    }
+}
+
+func pressKey(virtualKey: CGKeyCode) {
+    let source = CGEventSource(stateID: .hidSystemState)
+    let down = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true)
+    let up = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false)
+    down?.post(tap: .cghidEventTap)
+    up?.post(tap: .cghidEventTap)
+}
+
 class TrackpadServer {
     private var listener: NWListener?
     private let port: UInt16 = 8080
@@ -85,6 +133,59 @@ class TrackpadServer {
                 }
             }))
             fflush(stdout)
+            return
+        }
+
+        if message == "GET_APPS" {
+            let apps = getInstalledApps().joined(separator: ",")
+            let response = "APPS:\(apps)".data(using: .utf8)
+            connection.send(content: response, completion: .contentProcessed({ error in
+                if let error = error {
+                    print("[UDP] Failed to send apps list: \(error)")
+                } else {
+                    print("[UDP] Sent app list to \(connection.endpoint)")
+                }
+            }))
+            fflush(stdout)
+            return
+        }
+
+        if message.hasPrefix("LAUNCH_APP,") {
+            let appName = String(message.dropFirst("LAUNCH_APP,".count))
+            DispatchQueue.main.async {
+                launchApp(name: appName)
+            }
+            return
+        }
+
+        if message.hasPrefix("TYPE_B64,") {
+            let b64 = String(message.dropFirst("TYPE_B64,".count))
+            if let data = Data(base64Encoded: b64), let text = String(data: data, encoding: .utf8) {
+                DispatchQueue.main.async {
+                    typeText(text)
+                }
+            }
+            return
+        }
+
+        if message.hasPrefix("KEY,") {
+            let key = String(message.dropFirst("KEY,".count)).uppercased()
+            DispatchQueue.main.async {
+                switch key {
+                case "ENTER":
+                    pressKey(virtualKey: 36)
+                case "BACKSPACE":
+                    pressKey(virtualKey: 51)
+                case "SPACE":
+                    pressKey(virtualKey: 49)
+                case "TAB":
+                    pressKey(virtualKey: 48)
+                case "ESCAPE":
+                    pressKey(virtualKey: 53)
+                default:
+                    break
+                }
+            }
             return
         }
 
