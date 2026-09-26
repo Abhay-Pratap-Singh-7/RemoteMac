@@ -7,9 +7,12 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import okhttp3.*
+import okio.ByteString
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.util.concurrent.TimeUnit
 
 sealed class ConnectionStatus {
     object Disconnected : ConnectionStatus()
@@ -36,6 +39,7 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val sendChannel = Channel<String>(capacity = Channel.UNLIMITED)
     private var socket: DatagramSocket? = null
+    private var webSocket: WebSocket? = null
 
     private val _status = MutableStateFlow<ConnectionStatus>(ConnectionStatus.Disconnected)
     val status: StateFlow<ConnectionStatus> = _status
@@ -54,6 +58,12 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
 
     private val _isAiRunning = MutableStateFlow(false)
     val isAiRunning: StateFlow<Boolean> = _isAiRunning
+
+    private val _isRelayMode = MutableStateFlow(false)
+    val isRelayMode: StateFlow<Boolean> = _isRelayMode
+
+    private val _streamFrame = MutableStateFlow<ByteArray?>(null)
+    val streamFrame: StateFlow<ByteArray?> = _streamFrame
 
     private var targetIp: String? = null
 
@@ -259,7 +269,58 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
         send("KEY,$key")
     }
 
+    fun connectRelay(relayUrl: String, room: String) {
+        disconnect()
+        _status.value = ConnectionStatus.Connecting("Connecting to Cloud Relay...")
+        _isRelayMode.value = true
+
+        val cleanUrl = relayUrl.trim().removeSuffix("/")
+        val wsUrl = when {
+            cleanUrl.startsWith("http://") -> cleanUrl.replaceFirst("http://", "ws://")
+            cleanUrl.startsWith("https://") -> cleanUrl.replaceFirst("https://", "wss://")
+            cleanUrl.startsWith("ws://") || cleanUrl.startsWith("wss://") -> cleanUrl
+            else -> "wss://$cleanUrl"
+        }
+        val roomCode = room.trim().ifEmpty { "123456" }
+        val fullUrl = "$wsUrl/?role=phone&room=$roomCode"
+
+        val okHttpClient = OkHttpClient.Builder()
+            .pingInterval(20, TimeUnit.SECONDS)
+            .build()
+
+        val request = Request.Builder().url(fullUrl).build()
+        webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                _status.value = ConnectionStatus.Connected("Cloud Relay ($roomCode)")
+                send("CONNECT")
+                fetchApps()
+                fetchOpenTabs()
+                checkAiKey()
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                handleIncomingMessage(text, InetAddress.getLoopbackAddress())
+            }
+
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                _streamFrame.value = bytes.toByteArray()
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                _status.value = ConnectionStatus.Error("Relay error: ${t.localizedMessage ?: "Connection failed"}")
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                _status.value = ConnectionStatus.Disconnected
+            }
+        })
+    }
+
     fun disconnect() {
+        try { webSocket?.close(1000, "Disconnected by user") } catch (_: Exception) {}
+        webSocket = null
+        _isRelayMode.value = false
+        _streamFrame.value = null
         targetIp = null
         _status.value = ConnectionStatus.Disconnected
         _installedApps.value = emptyList()
@@ -267,7 +328,11 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
     }
 
     fun send(message: String) {
-        sendChannel.trySend(message)
+        if (_isRelayMode.value) {
+            webSocket?.send(message)
+        } else {
+            sendChannel.trySend(message)
+        }
     }
 
     private suspend fun processOutgoingQueue() {

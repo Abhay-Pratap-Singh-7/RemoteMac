@@ -485,6 +485,21 @@ class MJPEGStreamer {
         }
     }
 
+    var onFrameCaptured: ((Data) -> Void)?
+    var hasRelayViewer: (() -> Bool)?
+
+    func triggerCaptureIfNeeded() {
+        streamLock.lock()
+        let needsStart = !isCapturing
+        if needsStart {
+            isCapturing = true
+        }
+        streamLock.unlock()
+        if needsStart {
+            startCaptureLoop()
+        }
+    }
+
     private func startCaptureLoop() {
         Task {
             print("[Stream] Screen capture loop started")
@@ -496,7 +511,8 @@ class MJPEGStreamer {
                     return false
                 })
                 let count = self.connections.count
-                if count == 0 {
+                let relayActive = self.hasRelayViewer?() ?? false
+                if count == 0 && !relayActive {
                     self.isCapturing = false
                     self.streamLock.unlock()
                     print("[Stream] No viewers connected; pausing capture")
@@ -522,6 +538,7 @@ class MJPEGStreamer {
                         }
 
                         let jpegData = mutableData as Data
+                        self.onFrameCaptured?(jpegData)
                         let header = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: \(jpegData.count)\r\n\r\n".data(using: .utf8)!
                         let footer = "\r\n".data(using: .utf8)!
                         var packet = Data()
@@ -601,186 +618,311 @@ class TrackpadServer {
     private func handle(message: String, connection: NWConnection) {
         if message == "DISCOVER_SERVER" || message == "CONNECT" || message == "PING" {
             print("[UDP] Handshake '\(message)' received from \(connection.endpoint)")
-            let hasKey = !getStoredApiKey().isEmpty
-            let response = "CONNECTED,\(hasKey ? "KEY_SET" : "NO_KEY")".data(using: .utf8)
-            connection.send(content: response, completion: .contentProcessed({ _ in }))
             fflush(stdout)
-            return
         }
-
-        if message == "CHECK_AI_KEY" {
-            let hasKey = !getStoredApiKey().isEmpty
-            let response = "AI_KEY_STATUS,\(hasKey ? "CONFIGURED" : "MISSING")".data(using: .utf8)
+        processIncomingCommand(message) { reply in
+            let response = reply.data(using: .utf8)
             connection.send(content: response, completion: .contentProcessed({ _ in }))
-            return
         }
+    }
+}
 
-        if message.hasPrefix("SET_AI_KEY,") {
-            let key = String(message.dropFirst("SET_AI_KEY,".count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            saveStoredApiKey(key)
-            let statusResp = "AI_KEY_STATUS,CONFIGURED".data(using: .utf8)
-            connection.send(content: statusResp, completion: .contentProcessed({ _ in }))
-            let response = "AI_RESULT,SUCCESS,API Key Saved on Mac,".data(using: .utf8)
-            connection.send(content: response, completion: .contentProcessed({ _ in }))
-            return
-        }
+func moveCursor(dx: CGFloat, dy: CGFloat) {
+    let loc = CGEvent(source: nil)?.location ?? .zero
+    let target = CGPoint(x: loc.x + dx, y: loc.y + dy)
+    let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: target, mouseButton: .left)
+    moveEvent?.post(tap: .cghidEventTap)
+}
 
-        if message.hasPrefix("AI_EXEC,") {
-            let rest = String(message.dropFirst("AI_EXEC,".count))
-            let parts = rest.components(separatedBy: ",")
-            if parts.count >= 2, let data = Data(base64Encoded: parts[1]), let cmd = String(data: data, encoding: .utf8) {
-                DispatchQueue.main.async {
-                    executeAICommand(type: parts[0], command: cmd)
-                }
+func clickMouse(right: Bool) {
+    let loc = CGEvent(source: nil)?.location ?? .zero
+    let downType: CGEventType = right ? .rightMouseDown : .leftMouseDown
+    let upType: CGEventType = right ? .rightMouseUp : .leftMouseUp
+    let button: CGMouseButton = right ? .right : .left
+
+    let down = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: loc, mouseButton: button)
+    let up = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: loc, mouseButton: button)
+    down?.post(tap: .cghidEventTap)
+    up?.post(tap: .cghidEventTap)
+}
+
+func scroll(dx: Int32, dy: Int32) {
+    let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0)
+    event?.post(tap: .cghidEventTap)
+}
+
+func processIncomingCommand(_ message: String, replyHandler: @escaping (String) -> Void) {
+    if message == "DISCOVER_SERVER" || message == "CONNECT" || message == "PING" {
+        let hasKey = !getStoredApiKey().isEmpty
+        replyHandler("CONNECTED,\(hasKey ? "KEY_SET" : "NO_KEY")")
+        return
+    }
+
+    if message == "CHECK_AI_KEY" {
+        let hasKey = !getStoredApiKey().isEmpty
+        replyHandler("AI_KEY_STATUS,\(hasKey ? "CONFIGURED" : "MISSING")")
+        return
+    }
+
+    if message.hasPrefix("SET_AI_KEY,") {
+        let key = String(message.dropFirst("SET_AI_KEY,".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        saveStoredApiKey(key)
+        replyHandler("AI_KEY_STATUS,CONFIGURED")
+        replyHandler("AI_RESULT,SUCCESS,API Key Saved on Mac,")
+        return
+    }
+
+    if message.hasPrefix("AI_EXEC,") {
+        let rest = String(message.dropFirst("AI_EXEC,".count))
+        let parts = rest.components(separatedBy: ",")
+        if parts.count >= 2, let data = Data(base64Encoded: parts[1]), let cmd = String(data: data, encoding: .utf8) {
+            DispatchQueue.main.async {
+                executeAICommand(type: parts[0], command: cmd)
             }
-            return
         }
+        return
+    }
 
-        if message.hasPrefix("AI_LOG,") {
-            let logMsg = String(message.dropFirst("AI_LOG,".count))
-            print("[App Terminal Log] \(logMsg)")
-            fflush(stdout)
-            return
-        }
+    if message.hasPrefix("AI_LOG,") {
+        let logMsg = String(message.dropFirst("AI_LOG,".count))
+        print("[App Terminal Log] \(logMsg)")
+        fflush(stdout)
+        return
+    }
 
-        if message.hasPrefix("AI_TASK_B64,") {
-            let b64 = String(message.dropFirst("AI_TASK_B64,".count))
-            if let data = Data(base64Encoded: b64), let prompt = String(data: data, encoding: .utf8) {
-                print("[AI Task] Received prompt: \"\(prompt)\"")
-                callGeminiAndExecute(prompt: prompt) { success, summary, command in
-                    let status = success ? "SUCCESS" : "ERROR"
-                    let safeSummary = summary.replacingOccurrences(of: ",", with: ";")
-                    let safeCmd = command.replacingOccurrences(of: ",", with: ";")
-                    let reply = "AI_RESULT,\(status),\(safeSummary),\(safeCmd)".data(using: .utf8)
-                    connection.send(content: reply, completion: .contentProcessed({ _ in }))
-                }
+    if message.hasPrefix("AI_TASK_B64,") {
+        let b64 = String(message.dropFirst("AI_TASK_B64,".count))
+        if let data = Data(base64Encoded: b64), let prompt = String(data: data, encoding: .utf8) {
+            print("[AI Task] Received prompt: \"\(prompt)\"")
+            callGeminiAndExecute(prompt: prompt) { success, summary, command in
+                let status = success ? "SUCCESS" : "ERROR"
+                let safeSummary = summary.replacingOccurrences(of: ",", with: ";")
+                let safeCmd = command.replacingOccurrences(of: ",", with: ";")
+                replyHandler("AI_RESULT,\(status),\(safeSummary),\(safeCmd)")
             }
-            return
         }
+        return
+    }
 
-        if message == "GET_APPS" {
-            let apps = getInstalledApps().joined(separator: ",")
-            let response = "APPS:\(apps)".data(using: .utf8)
-            connection.send(content: response, completion: .contentProcessed({ _ in }))
-            return
+    if message == "GET_APPS" {
+        let apps = getInstalledApps().joined(separator: ",")
+        replyHandler("APPS:\(apps)")
+        return
+    }
+
+    if message == "GET_TABS" {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let tabsStr = refreshOpenWindowsAndTabs()
+            replyHandler("TABS:\(tabsStr)")
         }
+        return
+    }
 
-        if message == "GET_TABS" {
+    if message.hasPrefix("SWITCH_TAB,") {
+        let idStr = String(message.dropFirst("SWITCH_TAB,".count))
+        if let id = Int(idStr) {
             DispatchQueue.global(qos: .userInitiated).async {
-                let tabsStr = refreshOpenWindowsAndTabs()
-                let response = "TABS:\(tabsStr)".data(using: .utf8)
-                connection.send(content: response, completion: .contentProcessed({ _ in }))
+                doSwitchTab(id: id)
             }
-            return
         }
+        return
+    }
 
-        if message.hasPrefix("SWITCH_TAB,") {
-            let idStr = String(message.dropFirst("SWITCH_TAB,".count))
-            if let id = Int(idStr) {
-                DispatchQueue.global(qos: .userInitiated).async {
-                    doSwitchTab(id: id)
-                }
-            }
-            return
+    if message.hasPrefix("LAUNCH_APP,") {
+        let appName = String(message.dropFirst("LAUNCH_APP,".count))
+        DispatchQueue.main.async {
+            launchApp(name: appName)
         }
+        return
+    }
 
-        if message.hasPrefix("LAUNCH_APP,") {
-            let appName = String(message.dropFirst("LAUNCH_APP,".count))
+    if message.hasPrefix("ACTION,") {
+        let action = String(message.dropFirst("ACTION,".count))
+        DispatchQueue.main.async {
+            handleMacAction(action)
+        }
+        return
+    }
+
+    if message.hasPrefix("TYPE_B64,") {
+        let b64 = String(message.dropFirst("TYPE_B64,".count))
+        if let data = Data(base64Encoded: b64), let text = String(data: data, encoding: .utf8) {
             DispatchQueue.main.async {
-                launchApp(name: appName)
+                typeText(text)
             }
-            return
         }
+        return
+    }
 
-        if message.hasPrefix("ACTION,") {
-            let action = String(message.dropFirst("ACTION,".count))
-            DispatchQueue.main.async {
-                handleMacAction(action)
+    if message.hasPrefix("KEY,") {
+        let key = String(message.dropFirst("KEY,".count)).uppercased()
+        DispatchQueue.main.async {
+            switch key {
+            case "ENTER":
+                pressKey(virtualKey: 36)
+            case "BACKSPACE":
+                pressKey(virtualKey: 51)
+            case "SPACE":
+                pressKey(virtualKey: 49)
+            case "TAB":
+                pressKey(virtualKey: 48)
+            case "ESCAPE":
+                pressKey(virtualKey: 53)
+            default:
+                break
             }
-            return
         }
+        return
+    }
 
-        if message.hasPrefix("TYPE_B64,") {
-            let b64 = String(message.dropFirst("TYPE_B64,".count))
-            if let data = Data(base64Encoded: b64), let text = String(data: data, encoding: .utf8) {
-                DispatchQueue.main.async {
-                    typeText(text)
-                }
-            }
-            return
+    let parts = message.components(separatedBy: ",")
+    guard let action = parts.first else { return }
+
+    switch action {
+    case "MOVE":
+        if parts.count >= 3, let dx = Double(parts[1]), let dy = Double(parts[2]) {
+            moveCursor(dx: CGFloat(dx), dy: CGFloat(dy))
         }
+    case "CLICK":
+        clickMouse(right: false)
+    case "RCLICK":
+        clickMouse(right: true)
+    case "SCROLL":
+        if parts.count >= 3, let dx = Int32(parts[1]), let dy = Int32(parts[2]) {
+            scroll(dx: dx, dy: dy)
+        }
+    default:
+        break
+    }
+}
 
-        if message.hasPrefix("KEY,") {
-            let key = String(message.dropFirst("KEY,".count)).uppercased()
-            DispatchQueue.main.async {
-                switch key {
-                case "ENTER":
-                    pressKey(virtualKey: 36)
-                case "BACKSPACE":
-                    pressKey(virtualKey: 51)
-                case "SPACE":
-                    pressKey(virtualKey: 49)
-                case "TAB":
-                    pressKey(virtualKey: 48)
-                case "ESCAPE":
-                    pressKey(virtualKey: 53)
-                default:
+// MARK: - Cloud WebSocket Relay Client
+class RelayClient {
+    private var webSocketTask: URLSessionWebSocketTask?
+    private var isRunning = false
+    private let urlString: String
+    private let room: String
+    private let onCommand: (String, @escaping (String) -> Void) -> Void
+    var isConnected = false
+    var isPeerConnected = false
+
+    init(urlString: String, room: String, onCommand: @escaping (String, @escaping (String) -> Void) -> Void) {
+        self.urlString = urlString
+        self.room = room
+        self.onCommand = onCommand
+    }
+
+    func start() {
+        isRunning = true
+        connect()
+    }
+
+    private func connect() {
+        guard isRunning else { return }
+        var cleanUrl = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleanUrl.hasSuffix("/") { cleanUrl.removeLast() }
+        if cleanUrl.hasPrefix("https://") {
+            cleanUrl = "wss://" + cleanUrl.dropFirst("https://".count)
+        } else if cleanUrl.hasPrefix("http://") {
+            cleanUrl = "ws://" + cleanUrl.dropFirst("http://".count)
+        } else if !cleanUrl.hasPrefix("ws://") && !cleanUrl.hasPrefix("wss://") {
+            cleanUrl = "wss://" + cleanUrl
+        }
+        let full = "\(cleanUrl)/?role=mac&room=\(room)"
+        guard let url = URL(string: full) else { return }
+
+        print("[Relay] Connecting to Cloud Relay at \(full)...")
+        fflush(stdout)
+        let session = URLSession(configuration: .default)
+        let task = session.webSocketTask(with: url)
+        self.webSocketTask = task
+        task.resume()
+        self.isConnected = true
+        listen()
+    }
+
+    private func listen() {
+        webSocketTask?.receive { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let message):
+                switch message {
+                case .string(let text):
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed == "RELAY_PEER_CONNECTED,phone" {
+                        self.isPeerConnected = true
+                        print("[Relay] 🚀 Android phone connected via Cloud Relay!")
+                        fflush(stdout)
+                    } else if trimmed == "RELAY_PEER_DISCONNECTED,phone" {
+                        self.isPeerConnected = false
+                        print("[Relay] Android phone disconnected from Cloud Relay.")
+                        fflush(stdout)
+                    } else {
+                        self.onCommand(trimmed) { reply in
+                            self.send(reply)
+                        }
+                    }
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) {
+                        self.onCommand(text) { reply in
+                            self.send(reply)
+                        }
+                    }
+                @unknown default:
                     break
                 }
+                self.listen()
+            case .failure(let error):
+                print("[Relay] Disconnected: \(error.localizedDescription). Reconnecting in 5s...")
+                fflush(stdout)
+                self.isConnected = false
+                self.isPeerConnected = false
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                    if self.isRunning { self.connect() }
+                }
             }
-            return
-        }
-
-        let parts = message.components(separatedBy: ",")
-        guard let action = parts.first else { return }
-
-        switch action {
-        case "MOVE":
-            if parts.count >= 3, let dx = Double(parts[1]), let dy = Double(parts[2]) {
-                moveCursor(dx: CGFloat(dx), dy: CGFloat(dy))
-            }
-        case "CLICK":
-            clickMouse(right: false)
-        case "RCLICK":
-            clickMouse(right: true)
-        case "SCROLL":
-            if parts.count >= 3, let dx = Int32(parts[1]), let dy = Int32(parts[2]) {
-                scroll(dx: dx, dy: dy)
-            }
-        default:
-            break
         }
     }
 
-    private func moveCursor(dx: CGFloat, dy: CGFloat) {
-        let loc = CGEvent(source: nil)?.location ?? .zero
-        let target = CGPoint(x: loc.x + dx, y: loc.y + dy)
-        let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: target, mouseButton: .left)
-        moveEvent?.post(tap: .cghidEventTap)
+    func send(_ text: String) {
+        webSocketTask?.send(.string(text)) { error in
+            if let error = error {
+                print("[Relay] Send text error: \(error.localizedDescription)")
+            }
+        }
     }
 
-    private func clickMouse(right: Bool) {
-        let loc = CGEvent(source: nil)?.location ?? .zero
-        let downType: CGEventType = right ? .rightMouseDown : .leftMouseDown
-        let upType: CGEventType = right ? .rightMouseUp : .leftMouseUp
-        let button: CGMouseButton = right ? .right : .left
-
-        let down = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: loc, mouseButton: button)
-        let up = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: loc, mouseButton: button)
-        down?.post(tap: .cghidEventTap)
-        up?.post(tap: .cghidEventTap)
+    func sendBinary(_ data: Data) {
+        guard isPeerConnected else { return }
+        webSocketTask?.send(.data(data)) { _ in }
     }
+}
 
-    private func scroll(dx: Int32, dy: Int32) {
-        let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0)
-        event?.post(tap: .cghidEventTap)
+func getRelayConfig() -> (url: String, room: String)? {
+    let configPath = "/Users/abhay/Downloads/HotspotTrackpad/macOS/relay_config.txt"
+    if let content = try? String(contentsOfFile: configPath, encoding: .utf8) {
+        for line in content.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && !trimmed.hasPrefix("#") {
+                let parts = trimmed.components(separatedBy: ",")
+                if parts.count >= 2 {
+                    return (parts[0].trimmingCharacters(in: .whitespaces), parts[1].trimmingCharacters(in: .whitespaces))
+                }
+            }
+        }
     }
+    if let envUrl = ProcessInfo.processInfo.environment["RELAY_URL"], !envUrl.isEmpty {
+        let envRoom = ProcessInfo.processInfo.environment["RELAY_ROOM"] ?? "123456"
+        return (envUrl, envRoom)
+    }
+    return nil
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let server = TrackpadServer()
     private let streamer = MJPEGStreamer()
+    private var relayClient: RelayClient?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -799,6 +941,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         server.start()
         streamer.start()
+
+        if let relay = getRelayConfig() {
+            print("[Relay] Cloud Relay configured: \(relay.url) (Room: \(relay.room))")
+            let client = RelayClient(urlString: relay.url, room: relay.room) { [weak self] message, reply in
+                if message == "START_STREAM" {
+                    self?.streamer.triggerCaptureIfNeeded()
+                }
+                processIncomingCommand(message, replyHandler: reply)
+            }
+            self.relayClient = client
+            self.streamer.hasRelayViewer = { [weak client] in
+                client?.isPeerConnected ?? false
+            }
+            self.streamer.onFrameCaptured = { [weak client] frame in
+                client?.sendBinary(frame)
+            }
+            client.start()
+        }
     }
 }
 
@@ -807,3 +967,4 @@ let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.accessory)
 app.run()
+

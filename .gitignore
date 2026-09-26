@@ -6,3 +6,4 @@ build/
 .idea/
 local.properties
 gemini_key.txt
+relay-server/node_modules/

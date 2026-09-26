@@ -103,6 +103,7 @@ fun TrackpadScreen(
             // Live Stream (centered, aspect ratio preserved) or Trackpad Guide
             if (isStreamEnabled) {
                 MjpegStreamView(
+                    client = client,
                     serverIp = connectedIp,
                     port = 8081,
                     modifier = Modifier.fillMaxSize()

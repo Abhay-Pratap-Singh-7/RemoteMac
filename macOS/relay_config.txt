@@ -1,0 +1,10 @@
+# HotspotTrackpad Online Cloud Relay Configuration
+# Format: <relay_url>,<room_code>
+#
+# Examples:
+# For free Render deployment (replace with your Render URL):
+# wss://hotspot-trackpad-relay.onrender.com,123456
+#
+# For local network / testing relay:
+# ws://localhost:10000,123456
+ws://localhost:10000,123456

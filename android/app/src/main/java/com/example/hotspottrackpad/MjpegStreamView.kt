@@ -27,47 +27,70 @@ import java.net.URL
 
 @Composable
 fun MjpegStreamView(
+    client: TrackpadClient,
     serverIp: String,
     port: Int = 8081,
     modifier: Modifier = Modifier
 ) {
+    val isRelay by client.isRelayMode.collectAsState()
+    val relayFrame by client.streamFrame.collectAsState()
     var currentBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    val streamUrl = remember(serverIp, port) { "http://$serverIp:$port/stream" }
+    LaunchedEffect(isRelay) {
+        if (isRelay) {
+            client.send("START_STREAM")
+        }
+    }
 
-    LaunchedEffect(streamUrl) {
-        currentBitmap = null
-        errorMessage = null
-
-        withContext(Dispatchers.IO) {
-            var connection: HttpURLConnection? = null
-            var inputStream: BufferedInputStream? = null
-            try {
-                val url = URL(streamUrl)
-                connection = (url.openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 4000
-                    readTimeout = 6000
-                    doInput = true
-                    useCaches = false
+    if (isRelay) {
+        LaunchedEffect(relayFrame) {
+            val bytes = relayFrame
+            if (bytes != null && bytes.isNotEmpty()) {
+                val bmp = withContext(Dispatchers.Default) {
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 }
-                inputStream = BufferedInputStream(connection.inputStream)
-                val reader = JpegFrameReader(inputStream)
+                if (bmp != null) {
+                    currentBitmap = bmp
+                }
+            }
+        }
+    } else {
+        val streamUrl = remember(serverIp, port) { "http://$serverIp:$port/stream" }
 
-                while (isActive) {
-                    val frameBytes = reader.readNextFrame() ?: break
-                    val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size)
-                    if (bitmap != null) {
-                        currentBitmap = bitmap
+        LaunchedEffect(streamUrl) {
+            currentBitmap = null
+            errorMessage = null
+
+            withContext(Dispatchers.IO) {
+                var connection: HttpURLConnection? = null
+                var inputStream: BufferedInputStream? = null
+                try {
+                    val url = URL(streamUrl)
+                    connection = (url.openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 4000
+                        readTimeout = 6000
+                        doInput = true
+                        useCaches = false
                     }
+                    inputStream = BufferedInputStream(connection.inputStream)
+                    val reader = JpegFrameReader(inputStream)
+
+                    while (isActive) {
+                        val frameBytes = reader.readNextFrame() ?: break
+                        val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size)
+                        if (bitmap != null) {
+                            currentBitmap = bitmap
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (isActive) {
+                        errorMessage = e.localizedMessage ?: "Failed to connect to stream"
+                    }
+                } finally {
+                    try { inputStream?.close() } catch (_: Exception) {}
+                    try { connection?.disconnect() } catch (_: Exception) {}
                 }
-            } catch (e: Exception) {
-                if (isActive) {
-                    errorMessage = e.localizedMessage ?: "Failed to connect to stream"
-                }
-            } finally {
-                try { inputStream?.close() } catch (_: Exception) {}
-                try { connection?.disconnect() } catch (_: Exception) {}
             }
         }
     }
@@ -100,37 +123,46 @@ fun MjpegStreamView(
                 modifier = Modifier.padding(16.dp)
             )
         } else {
-            CircularProgressIndicator(
-                color = Color(0xFF2962FF),
-                modifier = Modifier.size(36.dp)
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CircularProgressIndicator(color = Color(0xFF64B5F6), strokeWidth = 2.dp)
+                Text(
+                    text = if (isRelay) "Receiving Mac Screen via Cloud Relay..." else "Connecting to Screen Stream...",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 11.sp
+                )
+            }
         }
     }
 }
 
-private class JpegFrameReader(private val stream: InputStream) {
+class JpegFrameReader(private val inputStream: InputStream) {
+    private val buffer = ByteArray(65536)
+
     fun readNextFrame(): ByteArray? {
-        val out = ByteArrayOutputStream()
-        var prev: Int
-        var curr = -1
-        var inFrame = false
+        val output = ByteArrayOutputStream()
+        var foundStart = false
+        var prevByte = -1
 
         while (true) {
-            prev = curr
-            curr = stream.read()
-            if (curr == -1) return null
+            val b = inputStream.read()
+            if (b == -1) return null
 
-            if (!inFrame) {
-                if (prev == 0xFF && curr == 0xD8) {
-                    inFrame = true
-                    out.write(0xFF)
-                    out.write(0xD8)
+            if (!foundStart) {
+                if (prevByte == 0xFF && b == 0xD8) {
+                    foundStart = true
+                    output.write(0xFF)
+                    output.write(0xD8)
                 }
+                prevByte = b
             } else {
-                out.write(curr)
-                if (prev == 0xFF && curr == 0xD9) {
-                    return out.toByteArray()
+                output.write(b)
+                if (prevByte == 0xFF && b == 0xD9) {
+                    return output.toByteArray()
                 }
+                prevByte = b
             }
         }
     }
