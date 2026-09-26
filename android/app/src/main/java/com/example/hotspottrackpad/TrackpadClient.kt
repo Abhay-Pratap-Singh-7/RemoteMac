@@ -19,10 +19,10 @@ sealed class ConnectionStatus {
 }
 
 data class MacTab(
+    val id: Int,
     val appName: String,
     val title: String,
-    val type: String,
-    val target: String
+    val type: String
 )
 
 class TrackpadClient(private val context: Context, private val port: Int = 8080) {
@@ -84,11 +84,12 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
                 val items = raw.split("###").mapNotNull { itemStr ->
                     val p = itemStr.split("|||")
                     if (p.size >= 4) {
+                        val id = p[0].toIntOrNull() ?: return@mapNotNull null
                         MacTab(
-                            appName = p[0],
-                            title = p[1],
-                            type = p[2],
-                            target = p.drop(2).joinToString("|||")
+                            id = id,
+                            appName = p[1],
+                            title = p[2],
+                            type = p[3]
                         )
                     } else null
                 }
@@ -172,7 +173,7 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
     }
 
     fun switchTab(tab: MacTab) {
-        send("SWITCH_TAB,${tab.type},${tab.target}")
+        send("SWITCH_TAB,${tab.id}")
     }
 
     fun launchApp(appName: String) {

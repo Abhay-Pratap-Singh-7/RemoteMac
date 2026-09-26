@@ -41,7 +41,19 @@ func getInstalledApps() -> [String] {
     return apps.sorted()
 }
 
-func getOpenWindowsAndTabs() -> String {
+struct CachedTab {
+    let id: Int
+    let type: String
+    let appName: String
+    let title: String
+    let target1: String
+    let target2: String
+}
+
+var cachedTabs: [Int: CachedTab] = [:]
+let tabLock = NSLock()
+
+func refreshOpenWindowsAndTabs() -> String {
     let script = """
     set res to {}
 
@@ -53,7 +65,7 @@ func getOpenWindowsAndTabs() -> String {
                     set wId to id of w as string
                     set tIdx to 1
                     repeat with t in tabs of w
-                        set end of res to "Google Chrome|||" & (title of t) & "|||chrome|||Google Chrome|||" & wId & "|||" & (tIdx as string)
+                        set end of res to "chrome|||Google Chrome|||" & (title of t) & "|||" & wId & "|||" & (tIdx as string)
                         set tIdx to tIdx + 1
                     end repeat
                 end repeat
@@ -69,7 +81,7 @@ func getOpenWindowsAndTabs() -> String {
                     set wId to id of w as string
                     set tIdx to 1
                     repeat with t in tabs of w
-                        set end of res to "Brave Browser|||" & (title of t) & "|||brave|||Brave Browser|||" & wId & "|||" & (tIdx as string)
+                        set end of res to "brave|||Brave Browser|||" & (title of t) & "|||" & wId & "|||" & (tIdx as string)
                         set tIdx to tIdx + 1
                     end repeat
                 end repeat
@@ -85,7 +97,7 @@ func getOpenWindowsAndTabs() -> String {
                 repeat with w in windows
                     set tIdx to 1
                     repeat with t in tabs of w
-                        set end of res to "Safari|||" & (name of t) & "|||safari|||Safari|||" & (wIdx as string) & "|||" & (tIdx as string)
+                        set end of res to "safari|||Safari|||" & (name of t) & "|||" & (wIdx as string) & "|||" & (tIdx as string)
                         set tIdx to tIdx + 1
                     end repeat
                     set wIdx to wIdx + 1
@@ -105,7 +117,7 @@ func getOpenWindowsAndTabs() -> String {
                         repeat with w in wList
                             set wName to name of w
                             if wName is not "" then
-                                set end of res to pName & "|||" & wName & "|||window|||" & pName & "|||" & wName
+                                set end of res to "window|||" & pName & "|||" & wName & "|||" & pName & "|||" & wName
                             end if
                         end repeat
                     end if
@@ -126,45 +138,71 @@ func getOpenWindowsAndTabs() -> String {
     try? task.run()
     task.waitUntilExit()
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+    tabLock.lock()
+    defer { tabLock.unlock() }
+    cachedTabs.removeAll()
+
+    var clientList = [String]()
+    var currentId = 0
+    let items = raw.components(separatedBy: "###")
+    for item in items {
+        let parts = item.components(separatedBy: "|||")
+        if parts.count >= 5 {
+            let type = parts[0]
+            let appName = parts[1]
+            let title = parts[2]
+            let target1 = parts[3]
+            let target2 = parts[4]
+            cachedTabs[currentId] = CachedTab(id: currentId, type: type, appName: appName, title: title, target1: target1, target2: target2)
+            clientList.append("\(currentId)|||\(appName)|||\(title)|||\(type)")
+            currentId += 1
+        }
+    }
+    return clientList.joined(separator: "###")
 }
 
-func switchTabOrWindow(type: String, target: String) {
-    let parts = target.components(separatedBy: "|||")
+func doSwitchTab(id: Int) {
+    tabLock.lock()
+    guard let item = cachedTabs[id] else {
+        tabLock.unlock()
+        print("[Switch] Tab id \(id) not found in cache")
+        return
+    }
+    let type = item.type
+    let appName = item.appName
+    let title = item.title
+    let target1 = item.target1
+    let target2 = item.target2
+    tabLock.unlock()
+
+    print("[Switch] Switching to [\(type)] \(appName) - \(title)")
     var script = ""
     if type == "chrome" || type == "brave" {
-        guard parts.count >= 3 else { return }
-        let appName = parts[0]
-        let wId = parts[1]
-        let tIdx = parts[2]
         script = """
         tell application "\(appName)"
-            set index of window id \(wId) to 1
-            set active tab index of window id \(wId) to \(tIdx)
+            set index of window id \(target1) to 1
+            set active tab index of window id \(target1) to \(target2)
             activate
         end tell
         """
     } else if type == "safari" {
-        guard parts.count >= 3 else { return }
-        let wIdx = parts[1]
-        let tIdx = parts[2]
         script = """
         tell application "Safari"
-            set index of window \(wIdx) to 1
-            set current tab of window \(wIdx) to tab \(tIdx) of window \(wIdx)
+            set index of window \(target1) to 1
+            set current tab of window \(target1) to tab \(target2) of window \(target1)
             activate
         end tell
         """
     } else if type == "window" {
-        guard parts.count >= 2 else { return }
-        let appName = parts[0]
-        let winTitle = parts[1].replacingOccurrences(of: "\"", with: "\\\"")
+        let cleanTitle = target2.replacingOccurrences(of: "\"", with: "\\\"")
         script = """
         tell application "System Events"
-            tell process "\(appName)"
+            tell process "\(target1)"
                 set frontmost to true
                 try
-                    perform action "AXRaise" of (first window whose name is "\(winTitle)")
+                    perform action "AXRaise" of (first window whose name is "\(cleanTitle)")
                 end try
             end tell
         end tell
@@ -176,7 +214,8 @@ func switchTabOrWindow(type: String, target: String) {
         task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         task.arguments = ["-e", script]
         try? task.run()
-        print("[Switch] Executed switch for: \(type)")
+        task.waitUntilExit()
+        print("[Switch] Completed switch with code \(task.terminationStatus)")
     }
 }
 
@@ -284,21 +323,20 @@ class TrackpadServer {
 
         if message == "GET_TABS" {
             DispatchQueue.global(qos: .userInitiated).async {
-                let tabs = getOpenWindowsAndTabs()
-                let response = "TABS:\(tabs)".data(using: .utf8)
+                let tabsStr = refreshOpenWindowsAndTabs()
+                let response = "TABS:\(tabsStr)".data(using: .utf8)
                 connection.send(content: response, completion: .contentProcessed({ _ in }))
+                print("[UDP] Sent \(cachedTabs.count) tabs to \(connection.endpoint)")
             }
             return
         }
 
         if message.hasPrefix("SWITCH_TAB,") {
-            let rest = String(message.dropFirst("SWITCH_TAB,".count))
-            let parts = rest.components(separatedBy: ",")
-            guard parts.count >= 2 else { return }
-            let type = parts[0]
-            let target = parts.dropFirst().joined(separator: ",")
-            DispatchQueue.global(qos: .userInitiated).async {
-                switchTabOrWindow(type: type, target: target)
+            let idStr = String(message.dropFirst("SWITCH_TAB,".count))
+            if let id = Int(idStr) {
+                DispatchQueue.global(qos: .userInitiated).async {
+                    doSwitchTab(id: id)
+                }
             }
             return
         }

@@ -107,7 +107,7 @@ fun TabsScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(vertical = 4.dp)
             ) {
-                items(filteredTabs, key = { "${it.appName}_${it.type}_${it.target}_${it.title}" }) { tab ->
+                items(filteredTabs, key = { it.id }) { tab ->
                     TabItemCard(
                         tab = tab,
                         onClick = {
