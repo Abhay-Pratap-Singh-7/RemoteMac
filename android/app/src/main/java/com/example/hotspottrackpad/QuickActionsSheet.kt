@@ -28,6 +28,8 @@ fun QuickActionsSheet(
     modifier: Modifier = Modifier
 ) {
     val actions = listOf(
+        QuickAction("WAKE", "☀️", "Wake Display"),
+        QuickAction("SLEEP", "🌙", "Sleep Display"),
         QuickAction("MISSION_CONTROL", "🎛️", "Mission Ctrl"),
         QuickAction("DESKTOP", "🖥️", "Desktop"),
         QuickAction("SPOTLIGHT", "🔍", "Spotlight"),
@@ -91,7 +93,13 @@ fun QuickActionsSheet(
                     ActionGridCard(
                         action = action,
                         onClick = {
-                            client.sendAction(action.actionKey)
+                            if (action.actionKey == "SLEEP") {
+                                client.sleepMac()
+                            } else if (action.actionKey == "WAKE") {
+                                client.wakeMac()
+                            } else {
+                                client.sendAction(action.actionKey)
+                            }
                         }
                     )
                 }

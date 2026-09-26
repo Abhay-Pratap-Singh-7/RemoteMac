@@ -65,6 +65,9 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
     private val _streamFrame = MutableStateFlow<ByteArray?>(null)
     val streamFrame: StateFlow<ByteArray?> = _streamFrame
 
+    private val _isMacAsleep = MutableStateFlow(false)
+    val isMacAsleep: StateFlow<Boolean> = _isMacAsleep
+
     private var targetIp: String? = null
 
     init {
@@ -73,6 +76,14 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
                 socket = DatagramSocket().apply { broadcast = true }
                 launch { processOutgoingQueue() }
                 launch { listenForIncomingPackets() }
+                launch {
+                    while (isActive) {
+                        delay(4000)
+                        if (status.value is ConnectionStatus.Connected) {
+                            checkSleepState()
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 _status.value = ConnectionStatus.Error("Failed to init UDP socket: ${e.localizedMessage}")
             }
@@ -95,6 +106,12 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
     }
 
     private fun handleIncomingMessage(message: String, fromAddress: InetAddress) {
+        if (message.startsWith("DISPLAY_STATE,")) {
+            val state = message.removePrefix("DISPLAY_STATE,").trim()
+            _isMacAsleep.value = (state == "ASLEEP")
+            return
+        }
+
         if (message.startsWith("CONNECTED")) {
             val ip = fromAddress.hostAddress ?: targetIp ?: return
             targetIp = ip
@@ -104,7 +121,13 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
             } else if (message.contains("NO_KEY")) {
                 _isAiKeyConfigured.value = false
             }
+            if (message.contains("ASLEEP")) {
+                _isMacAsleep.value = true
+            } else if (message.contains("AWAKE")) {
+                _isMacAsleep.value = false
+            }
             checkAiKey()
+            checkSleepState()
             fetchApps()
             fetchOpenTabs()
         } else if (message.startsWith("AI_KEY_STATUS,")) {
@@ -269,6 +292,20 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
         send("KEY,$key")
     }
 
+    fun sleepMac() {
+        send("ACTION,SLEEP")
+        _isMacAsleep.value = true
+    }
+
+    fun wakeMac() {
+        send("ACTION,WAKE")
+        _isMacAsleep.value = false
+    }
+
+    fun checkSleepState() {
+        send("CHECK_SLEEP")
+    }
+
     fun connectRelay(relayUrl: String, room: String) {
         disconnect()
         _status.value = ConnectionStatus.Connecting("Connecting to Cloud Relay...")
@@ -296,6 +333,7 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
                 fetchApps()
                 fetchOpenTabs()
                 checkAiKey()
+                checkSleepState()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {

@@ -414,6 +414,21 @@ func handleMacAction(_ action: String) {
         runAppleScript("set volume output muted (not (output muted of (get volume settings)))")
     case "PLAY_PAUSE":
         runAppleScript("tell application \"System Events\" to key code 100")
+    case "SLEEP":
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        task.arguments = ["displaysleepnow"]
+        try? task.run()
+    case "WAKE":
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/caffeinate")
+        task.arguments = ["-u", "-t", "2"]
+        try? task.run()
+        let src = CGEventSource(stateID: .hidSystemState)
+        let sDown = CGEvent(keyboardEventSource: src, virtualKey: 56, keyDown: true)
+        let sUp = CGEvent(keyboardEventSource: src, virtualKey: 56, keyDown: false)
+        sDown?.post(tap: .cghidEventTap)
+        sUp?.post(tap: .cghidEventTap)
     default:
         break
     }
@@ -574,6 +589,13 @@ class MJPEGStreamer {
 class TrackpadServer {
     private var listener: NWListener?
     private let port: UInt16 = 8080
+    private var lastConnection: NWConnection?
+
+    func broadcast(message: String) {
+        if let data = message.data(using: .utf8) {
+            lastConnection?.send(content: data, completion: .contentProcessed({ _ in }))
+        }
+    }
 
     func start() {
         guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
@@ -624,6 +646,7 @@ class TrackpadServer {
     }
 
     private func handle(message: String, connection: NWConnection) {
+        self.lastConnection = connection
         if message == "DISCOVER_SERVER" || message == "CONNECT" || message == "PING" {
             print("[UDP] Handshake '\(message)' received from \(connection.endpoint)")
             fflush(stdout)
@@ -662,7 +685,15 @@ func scroll(dx: Int32, dy: Int32) {
 func processIncomingCommand(_ message: String, replyHandler: @escaping (String) -> Void) {
     if message == "DISCOVER_SERVER" || message == "CONNECT" || message == "PING" {
         let hasKey = !getStoredApiKey().isEmpty
+        let isAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
         replyHandler("CONNECTED,\(hasKey ? "KEY_SET" : "NO_KEY")")
+        replyHandler("DISPLAY_STATE,\(isAsleep ? "ASLEEP" : "AWAKE")")
+        return
+    }
+
+    if message == "CHECK_SLEEP" || message == "GET_SLEEP_STATE" {
+        let isAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
+        replyHandler("DISPLAY_STATE,\(isAsleep ? "ASLEEP" : "AWAKE")")
         return
     }
 
@@ -748,6 +779,11 @@ func processIncomingCommand(_ message: String, replyHandler: @escaping (String) 
         let action = String(message.dropFirst("ACTION,".count))
         DispatchQueue.main.async {
             handleMacAction(action)
+            if action == "SLEEP" {
+                replyHandler("DISPLAY_STATE,ASLEEP")
+            } else if action == "WAKE" {
+                replyHandler("DISPLAY_STATE,AWAKE")
+            }
         }
         return
     }
@@ -982,6 +1018,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 client?.sendBinary(frame)
             }
             client.start()
+        }
+
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            print("[System] Display went to sleep")
+            self?.server.broadcast(message: "DISPLAY_STATE,ASLEEP")
+            self?.relayClient?.send("DISPLAY_STATE,ASLEEP")
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            print("[System] Display woke up")
+            self?.server.broadcast(message: "DISPLAY_STATE,AWAKE")
+            self?.relayClient?.send("DISPLAY_STATE,AWAKE")
         }
     }
 }

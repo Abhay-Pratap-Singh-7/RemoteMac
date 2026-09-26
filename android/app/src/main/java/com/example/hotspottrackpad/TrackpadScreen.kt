@@ -1,9 +1,11 @@
 package com.example.hotspottrackpad
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -12,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
@@ -19,9 +22,11 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun TrackpadScreen(
@@ -36,6 +41,8 @@ fun TrackpadScreen(
     var showAiOverlay by remember { mutableStateOf(false) }
     var showKeyboardBar by remember { mutableStateOf(false) }
     var textValue by remember { mutableStateOf(TextFieldValue("")) }
+    var keyboardOffset by remember { mutableStateOf(Offset.Zero) }
+    val isMacAsleep by client.isMacAsleep.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     Row(
@@ -88,6 +95,17 @@ fun TrackpadScreen(
                         showAppsOverlay = false
                         showAiOverlay = false
                     }
+                }
+            )
+
+            // Sleep / Wake Button
+            SideDockButton(
+                icon = if (isMacAsleep) "☀️" else "🌙",
+                label = if (isMacAsleep) "Wake" else "Sleep",
+                isSelected = isMacAsleep,
+                activeColor = Color(0xFFFFB300),
+                onClick = {
+                    if (isMacAsleep) client.wakeMac() else client.sleepMac()
                 }
             )
         }
@@ -258,15 +276,58 @@ fun TrackpadScreen(
                 }
             }
 
-            // Floating Real-Time Keyboard Input Bar (at top of center area)
+            // Mac Sleep State Banner / Indicator
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isMacAsleep,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 10.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xF21C1826),
+                    border = BorderStroke(1.dp, Color(0xFFFFB300)),
+                    shadowElevation = 12.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "🌙 Mac Display is Asleep",
+                            color = Color(0xFFFFE082),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Button(
+                            onClick = { client.wakeMac() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB300)),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            modifier = Modifier.height(26.dp)
+                        ) {
+                            Text("☀️ Wake Up", fontSize = 11.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            // Floating Draggable Real-Time Keyboard
             if (showKeyboardBar) {
                 Card(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 8.dp, start = 16.dp, end = 16.dp)
-                        .fillMaxWidth(0.85f),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xEE1E1E1E)),
-                    shape = RoundedCornerShape(12.dp)
+                        .offset { IntOffset(keyboardOffset.x.roundToInt(), keyboardOffset.y.roundToInt()) }
+                        .padding(8.dp)
+                        .widthIn(max = 420.dp)
+                        .fillMaxWidth(0.75f),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xF21C1C1E)),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, Color(0xFF383838)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
                 ) {
                     Column(
                         modifier = Modifier
@@ -274,6 +335,36 @@ fun TrackpadScreen(
                             .padding(8.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        // Drag Handle Header
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .pointerInput(Unit) {
+                                    detectDragGestures { change, dragAmount ->
+                                        change.consume()
+                                        keyboardOffset += dragAmount
+                                    }
+                                }
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text("⋮⋮", color = Color(0xFF888888), fontSize = 12.sp)
+                                Text("Floating Keyboard (Drag here)", color = Color(0xFFCCCCCC), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            IconButton(
+                                onClick = { showKeyboardBar = false },
+                                modifier = Modifier.size(20.dp)
+                            ) {
+                                Text("✕", fontSize = 11.sp, color = Color(0xFFAAAAAA))
+                            }
+                        }
+
+                        // Live typing text field row
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -293,10 +384,10 @@ fun TrackpadScreen(
                                     }
                                     textValue = newVal
                                 },
-                                placeholder = { Text("Live typing streams to Mac...", color = Color(0xFF777777), fontSize = 12.sp) },
+                                placeholder = { Text("Live typing streams to Mac...", color = Color(0xFF777777), fontSize = 11.sp) },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(44.dp)
+                                    .height(42.dp)
                                     .onPreviewKeyEvent { event ->
                                         if (event.type == KeyEventType.KeyDown && event.key == Key.Backspace && textValue.text.isEmpty()) {
                                             client.sendKey("BACKSPACE")
@@ -318,71 +409,106 @@ fun TrackpadScreen(
                             Button(
                                 onClick = { textValue = TextFieldValue("") },
                                 shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E2E2E)),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.height(36.dp)
                             ) {
-                                Text("Clear", fontSize = 11.sp, color = Color(0xFFAAAAAA))
-                            }
-
-                            Button(
-                                onClick = { showKeyboardBar = false },
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                            ) {
-                                Text("✕", fontSize = 11.sp, color = Color.White)
+                                Text("Clear", fontSize = 10.sp, color = Color(0xFFAAAAAA))
                             }
                         }
 
-                        // Quick Keys Row
+                        // Quick Keys Row 1
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Button(
                                 onClick = { client.sendKey("ENTER") },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(30.dp),
                                 shape = RoundedCornerShape(4.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
-                                contentPadding = PaddingValues(vertical = 4.dp)
+                                contentPadding = PaddingValues(0.dp)
                             ) {
-                                Text("↵ Enter", fontSize = 10.sp, color = Color.White)
+                                Text("↵ Enter", fontSize = 9.sp, color = Color.White)
                             }
                             Button(
                                 onClick = { client.sendKey("BACKSPACE") },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(30.dp),
                                 shape = RoundedCornerShape(4.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
-                                contentPadding = PaddingValues(vertical = 4.dp)
+                                contentPadding = PaddingValues(0.dp)
                             ) {
-                                Text("⌫ Del", fontSize = 10.sp, color = Color.White)
+                                Text("⌫ Del", fontSize = 9.sp, color = Color.White)
                             }
                             Button(
                                 onClick = { client.sendKey("SPACE") },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(30.dp),
                                 shape = RoundedCornerShape(4.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
-                                contentPadding = PaddingValues(vertical = 4.dp)
+                                contentPadding = PaddingValues(0.dp)
                             ) {
-                                Text("␣ Space", fontSize = 10.sp, color = Color.White)
+                                Text("␣ Space", fontSize = 9.sp, color = Color.White)
                             }
                             Button(
                                 onClick = { client.sendKey("TAB") },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(30.dp),
                                 shape = RoundedCornerShape(4.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
-                                contentPadding = PaddingValues(vertical = 4.dp)
+                                contentPadding = PaddingValues(0.dp)
                             ) {
-                                Text("⇥ Tab", fontSize = 10.sp, color = Color.White)
+                                Text("⇥ Tab", fontSize = 9.sp, color = Color.White)
                             }
                             Button(
                                 onClick = { client.sendKey("ESCAPE") },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).height(30.dp),
                                 shape = RoundedCornerShape(4.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
-                                contentPadding = PaddingValues(vertical = 4.dp)
+                                contentPadding = PaddingValues(0.dp)
                             ) {
-                                Text("⎋ Esc", fontSize = 10.sp, color = Color.White)
+                                Text("⎋ Esc", fontSize = 9.sp, color = Color.White)
+                            }
+                        }
+
+                        // Quick Keys Row 2: Shortcuts
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Button(
+                                onClick = { client.sendAction("COPY") },
+                                modifier = Modifier.weight(1f).height(28.dp),
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF222222)),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("⌘C", fontSize = 9.sp, color = Color(0xFF81D4FA))
+                            }
+                            Button(
+                                onClick = { client.sendAction("PASTE") },
+                                modifier = Modifier.weight(1f).height(28.dp),
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF222222)),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("⌘V", fontSize = 9.sp, color = Color(0xFF81D4FA))
+                            }
+                            Button(
+                                onClick = { client.sendAction("UNDO") },
+                                modifier = Modifier.weight(1f).height(28.dp),
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF222222)),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("⌘Z", fontSize = 9.sp, color = Color(0xFF81D4FA))
+                            }
+                            Button(
+                                onClick = { client.sendAction("CLOSE_WINDOW") },
+                                modifier = Modifier.weight(1f).height(28.dp),
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF222222)),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("⌘W", fontSize = 9.sp, color = Color(0xFFEF9A9A))
                             }
                         }
                     }
