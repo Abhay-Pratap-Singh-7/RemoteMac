@@ -4,9 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -82,18 +80,24 @@ fun MjpegStreamView(
     ) {
         val bmp = currentBitmap
         if (bmp != null) {
+            val aspectRatio = remember(bmp) {
+                if (bmp.height > 0) bmp.width.toFloat() / bmp.height.toFloat() else 16f / 9f
+            }
             Image(
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = "Mac Live Screen",
                 contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(aspectRatio, matchHeightConstraintsFirst = true)
             )
         } else if (errorMessage != null) {
             Text(
-                text = "Screen Stream: $errorMessage\nMake sure Screen Recording is permitted in Mac System Settings",
+                text = "Screen Stream: $errorMessage\nEnsure Screen Recording is permitted in Mac System Settings",
                 color = Color(0xFFEF5350),
                 fontSize = 12.sp,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(16.dp)
             )
         } else {
             CircularProgressIndicator(
@@ -107,7 +111,7 @@ fun MjpegStreamView(
 private class JpegFrameReader(private val stream: InputStream) {
     fun readNextFrame(): ByteArray? {
         val out = ByteArrayOutputStream()
-        var prev = -1
+        var prev: Int
         var curr = -1
         var inFrame = false
 

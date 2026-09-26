@@ -103,7 +103,7 @@ fun AppsScreen(
                 modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 68.dp)
+                contentPadding = PaddingValues(bottom = 12.dp)
             ) {
                 items(filteredApps, key = { it }) { appName ->
                     AppItemCard(

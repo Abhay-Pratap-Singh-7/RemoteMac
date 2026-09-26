@@ -110,7 +110,7 @@ fun TabsScreen(
                 modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 68.dp) // space for floating dock
+                contentPadding = PaddingValues(bottom = 12.dp)
             ) {
                 items(filteredTabs, key = { it.id }) { tab ->
                     TabCardGridItem(
