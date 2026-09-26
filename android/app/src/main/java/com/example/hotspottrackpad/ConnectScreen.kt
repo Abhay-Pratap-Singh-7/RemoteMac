@@ -24,9 +24,9 @@ enum class ConnectMode {
 @Composable
 fun ConnectScreen(client: TrackpadClient) {
     val status by client.status.collectAsState()
-    var mode by remember { mutableStateOf(ConnectMode.LOCAL_WIFI) }
+    var mode by remember { mutableStateOf(ConnectMode.ONLINE_CLOUD) }
     var inputIp by remember { mutableStateOf("10.202.35.108") }
-    var relayUrl by remember { mutableStateOf("wss://hotspot-trackpad-relay.onrender.com") }
+    var relayUrl by remember { mutableStateOf("wss://remotemac.onrender.com") }
     var roomCode by remember { mutableStateOf("123456") }
 
     Box(
