@@ -180,6 +180,10 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
         send("LAUNCH_APP,$appName")
     }
 
+    fun sendAction(action: String) {
+        send("ACTION,$action")
+    }
+
     fun typeText(text: String) {
         if (text.isEmpty()) return
         val b64 = Base64.encodeToString(text.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)

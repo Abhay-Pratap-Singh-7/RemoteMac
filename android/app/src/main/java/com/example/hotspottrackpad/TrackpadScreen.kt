@@ -1,5 +1,6 @@
 package com.example.hotspottrackpad
 
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -20,13 +21,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kotlin.math.abs
-
-enum class ActiveScreen {
-    TRACKPAD,
-    TABS,
-    APPS
-}
 
 @Composable
 fun TrackpadScreen(
@@ -34,57 +30,68 @@ fun TrackpadScreen(
     connectedIp: String,
     onDisconnect: () -> Unit
 ) {
-    var activeScreen by remember { mutableStateOf(ActiveScreen.TRACKPAD) }
     var isStreamEnabled by remember { mutableStateOf(false) }
+    var showTabsOverlay by remember { mutableStateOf(false) }
+    var showActionsOverlay by remember { mutableStateOf(false) }
+    var showAppsOverlay by remember { mutableStateOf(false) }
     var showKeyboardBar by remember { mutableStateOf(false) }
     var textValue by remember { mutableStateOf(TextFieldValue("")) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     Row(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0D0D0D))
+            .background(Color(0xFF0A0A0A))
     ) {
-        // LEFT VERTICAL COLUMN DOCK (Trackpad, Stream Toggle, Tabs)
+        // LEFT VERTICAL DOCK: Trackpad, Stream, Fast Controller Actions
         Column(
             modifier = Modifier
-                .width(68.dp)
+                .width(64.dp)
                 .fillMaxHeight()
-                .background(Color(0xFF161616))
-                .padding(vertical = 12.dp, horizontal = 4.dp),
+                .background(Color(0xFF141414))
+                .padding(vertical = 10.dp, horizontal = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Trackpad Button
-            SideNavButton(
+            // Trackpad reset button
+            SideDockButton(
                 icon = "🖱️",
-                label = "Trackpad",
-                isSelected = activeScreen == ActiveScreen.TRACKPAD,
-                onClick = { activeScreen = ActiveScreen.TRACKPAD }
-            )
-
-            // Stream Toggle Button
-            SideNavButton(
-                icon = "📺",
-                label = if (isStreamEnabled) "Live ON" else "Stream",
-                isSelected = isStreamEnabled,
-                activeColor = Color(0xFF00C853),
+                label = "Pad",
+                isSelected = !showTabsOverlay && !showAppsOverlay && !showActionsOverlay,
                 onClick = {
-                    isStreamEnabled = !isStreamEnabled
-                    if (isStreamEnabled) activeScreen = ActiveScreen.TRACKPAD
+                    showTabsOverlay = false
+                    showAppsOverlay = false
+                    showActionsOverlay = false
                 }
             )
 
-            // Tabs Button
-            SideNavButton(
-                icon = "📑",
-                label = "Tabs",
-                isSelected = activeScreen == ActiveScreen.TABS,
-                onClick = { activeScreen = ActiveScreen.TABS }
+            // Stream Toggle
+            SideDockButton(
+                icon = "📺",
+                label = if (isStreamEnabled) "Live" else "Stream",
+                isSelected = isStreamEnabled,
+                activeColor = Color(0xFF00C853),
+                onClick = { isStreamEnabled = !isStreamEnabled }
+            )
+
+            // Mac Controller Actions
+            SideDockButton(
+                icon = "⚡",
+                label = "Actions",
+                isSelected = showActionsOverlay,
+                activeColor = Color(0xFFFFA000),
+                onClick = {
+                    showActionsOverlay = !showActionsOverlay
+                    if (showActionsOverlay) {
+                        showTabsOverlay = false
+                        showAppsOverlay = false
+                    }
+                }
             )
         }
 
-        // CENTER MAIN CONTENT AREA (Does NOT overlap with side docks)
+        // CENTER MAIN CONTENT (Trackpad & Stream, with overlay slide-outs)
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -92,110 +99,157 @@ fun TrackpadScreen(
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            when (activeScreen) {
-                ActiveScreen.TRACKPAD -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        // Live Stream takes only the exact aspect ratio and is aligned in middle
-                        if (isStreamEnabled) {
-                            MjpegStreamView(
-                                serverIp = connectedIp,
-                                port = 8081,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color(0xFF121212)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "🖱️ Trackpad Active\n1 Finger: Move Cursor & Tap to Click\n2 Fingers: Scroll & Tap to Right-Click\nTap 📺 to Toggle Mac Screen Stream",
-                                    color = Color(0xFF555555),
-                                    fontSize = 13.sp,
-                                    lineHeight = 22.sp,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
-                            }
-                        }
-
-                        // Touch Gesture Surface (Overlays entire center area; no L/R buttons)
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(Unit) {
-                                    awaitEachGesture {
-                                        awaitFirstDown(requireUnconsumed = false)
-                                        val startTime = System.currentTimeMillis()
-                                        var totalMovement = 0f
-                                        var maxFingerCount = 1
-
-                                        while (true) {
-                                            val event = awaitPointerEvent()
-                                            val pointers = event.changes.filter { it.pressed }
-                                            if (pointers.isEmpty()) break
-
-                                            if (pointers.size > maxFingerCount) {
-                                                maxFingerCount = pointers.size
-                                            }
-
-                                            if (pointers.size == 1) {
-                                                val change = pointers[0].positionChange()
-                                                totalMovement += abs(change.x) + abs(change.y)
-                                                if (change.x != 0f || change.y != 0f) {
-                                                    client.send("MOVE,${change.x * 1.5f},${change.y * 1.5f}")
-                                                    pointers[0].consume()
-                                                }
-                                            } else if (pointers.size >= 2) {
-                                                val p1 = pointers[0].positionChange()
-                                                val p2 = pointers[1].positionChange()
-                                                val avgDx = (p1.x + p2.x) / 2f
-                                                val avgDy = (p1.y + p2.y) / 2f
-                                                totalMovement += abs(avgDx) + abs(avgDy)
-                                                if (avgDx != 0f || avgDy != 0f) {
-                                                    client.send("SCROLL,${(-avgDx).toInt()},${avgDy.toInt()}")
-                                                    pointers[0].consume()
-                                                    pointers[1].consume()
-                                                }
-                                            }
-                                        }
-
-                                        val duration = System.currentTimeMillis() - startTime
-                                        if (duration < 250 && totalMovement < 15f) {
-                                            if (maxFingerCount >= 2) {
-                                                client.send("RCLICK")
-                                            } else {
-                                                client.send("CLICK")
-                                            }
-                                        }
-                                    }
-                                }
-                        )
-                    }
-                }
-
-                ActiveScreen.TABS -> {
-                    TabsScreen(
-                        client = client,
-                        snackbarHostState = snackbarHostState
-                    )
-                }
-
-                ActiveScreen.APPS -> {
-                    AppsScreen(
-                        client = client,
-                        snackbarHostState = snackbarHostState
+            // Live Stream (centered, aspect ratio preserved) or Trackpad Guide
+            if (isStreamEnabled) {
+                MjpegStreamView(
+                    serverIp = connectedIp,
+                    port = 8081,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF101010)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "🖱️ Trackpad Active\n1 Finger: Move Cursor & Tap to Click\n2 Fingers: Scroll & Tap to Right-Click\nTap 📺 to Toggle Mac Screen Stream",
+                        color = Color(0xFF555555),
+                        fontSize = 13.sp,
+                        lineHeight = 22.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
             }
 
-            // Real-Time Keyboard Input Bar (at top of center area when enabled)
+            // Touch Gesture Surface (Overlays entire center area; NO L/R buttons)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            val startTime = System.currentTimeMillis()
+                            var totalMovement = 0f
+                            var maxFingerCount = 1
+
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val pointers = event.changes.filter { it.pressed }
+                                if (pointers.isEmpty()) break
+
+                                if (pointers.size > maxFingerCount) {
+                                    maxFingerCount = pointers.size
+                                }
+
+                                if (pointers.size == 1) {
+                                    val change = pointers[0].positionChange()
+                                    totalMovement += abs(change.x) + abs(change.y)
+                                    if (change.x != 0f || change.y != 0f) {
+                                        client.send("MOVE,${change.x * 1.5f},${change.y * 1.5f}")
+                                        pointers[0].consume()
+                                    }
+                                } else if (pointers.size >= 2) {
+                                    val p1 = pointers[0].positionChange()
+                                    val p2 = pointers[1].positionChange()
+                                    val avgDx = (p1.x + p2.x) / 2f
+                                    val avgDy = (p1.y + p2.y) / 2f
+                                    totalMovement += abs(avgDx) + abs(avgDy)
+                                    if (avgDx != 0f || avgDy != 0f) {
+                                        client.send("SCROLL,${(-avgDx).toInt()},${avgDy.toInt()}")
+                                        pointers[0].consume()
+                                        pointers[1].consume()
+                                    }
+                                }
+                            }
+
+                            val duration = System.currentTimeMillis() - startTime
+                            if (duration < 250 && totalMovement < 15f) {
+                                if (maxFingerCount >= 2) {
+                                    client.send("RCLICK")
+                                } else {
+                                    client.send("CLICK")
+                                }
+                            }
+                        }
+                    }
+            )
+
+            // Slide-out Left Overlay: Quick Mac Actions
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showActionsOverlay,
+                enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.CenterStart)
+            ) {
+                QuickActionsSheet(
+                    client = client,
+                    onDismiss = { showActionsOverlay = false }
+                )
+            }
+
+            // Slide-out Right Overlay: Minimal Open Tabs Sheet
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showTabsOverlay,
+                enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                TabsOverlaySheet(
+                    client = client,
+                    onDismiss = {
+                        // Immediately dismiss and switch to trackpad!
+                        showTabsOverlay = false
+                    }
+                )
+            }
+
+            // Slide-out Right Overlay: Mac Apps Launcher
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showAppsOverlay,
+                enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(320.dp)
+                    .fillMaxHeight()
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp),
+                    color = Color(0xF5181818),
+                    tonalElevation = 12.dp,
+                    shadowElevation = 16.dp
+                ) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("🚀 Launch Apps", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            IconButton(onClick = { showAppsOverlay = false }, modifier = Modifier.size(28.dp)) {
+                                Text("✕", color = Color(0xFFAAAAAA))
+                            }
+                        }
+                        AppsScreen(
+                            client = client,
+                            snackbarHostState = snackbarHostState
+                        )
+                    }
+                }
+            }
+
+            // Floating Real-Time Keyboard Input Bar (at top of center area)
             if (showKeyboardBar) {
                 Card(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 10.dp, start = 20.dp, end = 20.dp)
-                        .fillMaxWidth(0.9f),
+                        .padding(top = 8.dp, start = 16.dp, end = 16.dp)
+                        .fillMaxWidth(0.85f),
                     colors = CardDefaults.cardColors(containerColor = Color(0xEE1E1E1E)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
@@ -227,7 +281,7 @@ fun TrackpadScreen(
                                 placeholder = { Text("Live typing streams to Mac...", color = Color(0xFF777777), fontSize = 12.sp) },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(46.dp)
+                                    .height(44.dp)
                                     .onPreviewKeyEvent { event ->
                                         if (event.type == KeyEventType.KeyDown && event.key == Key.Backspace && textValue.text.isEmpty()) {
                                             client.sendKey("BACKSPACE")
@@ -250,7 +304,7 @@ fun TrackpadScreen(
                                 onClick = { textValue = TextFieldValue("") },
                                 shape = RoundedCornerShape(6.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                             ) {
                                 Text("Clear", fontSize = 11.sp, color = Color(0xFFAAAAAA))
                             }
@@ -259,7 +313,7 @@ fun TrackpadScreen(
                                 onClick = { showKeyboardBar = false },
                                 shape = RoundedCornerShape(6.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                             ) {
                                 Text("✕", fontSize = 11.sp, color = Color.White)
                             }
@@ -324,34 +378,56 @@ fun TrackpadScreen(
                 hostState = snackbarHostState,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 12.dp)
+                    .padding(bottom = 8.dp)
             )
         }
 
-        // RIGHT VERTICAL COLUMN DOCK (Apps, Keyboard, Disconnect)
+        // RIGHT VERTICAL DOCK: Tabs, Apps, Type, Disconnect
         Column(
             modifier = Modifier
-                .width(68.dp)
+                .width(64.dp)
                 .fillMaxHeight()
-                .background(Color(0xFF161616))
-                .padding(vertical = 12.dp, horizontal = 4.dp),
+                .background(Color(0xFF141414))
+                .padding(vertical = 10.dp, horizontal = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // Tabs Button (Shifted to right!)
+            SideDockButton(
+                icon = "📑",
+                label = "Tabs",
+                isSelected = showTabsOverlay,
+                activeColor = Color(0xFF2962FF),
+                onClick = {
+                    showTabsOverlay = !showTabsOverlay
+                    if (showTabsOverlay) {
+                        showAppsOverlay = false
+                        showActionsOverlay = false
+                    }
+                }
+            )
+
             // Apps Button
-            SideNavButton(
+            SideDockButton(
                 icon = "🚀",
                 label = "Apps",
-                isSelected = activeScreen == ActiveScreen.APPS,
-                onClick = { activeScreen = ActiveScreen.APPS }
+                isSelected = showAppsOverlay,
+                activeColor = Color(0xFF7B1FA2),
+                onClick = {
+                    showAppsOverlay = !showAppsOverlay
+                    if (showAppsOverlay) {
+                        showTabsOverlay = false
+                        showActionsOverlay = false
+                    }
+                }
             )
 
             // Keyboard Button
-            SideNavButton(
+            SideDockButton(
                 icon = "⌨️",
                 label = if (showKeyboardBar) "Hide" else "Type",
                 isSelected = showKeyboardBar,
-                activeColor = Color(0xFF2962FF),
+                activeColor = Color(0xFF00B0FF),
                 onClick = { showKeyboardBar = !showKeyboardBar }
             )
 
@@ -362,12 +438,12 @@ fun TrackpadScreen(
                 onClick = onDisconnect,
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828)),
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("🔌", fontSize = 14.sp)
-                    Text("Exit", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Exit", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -375,7 +451,7 @@ fun TrackpadScreen(
 }
 
 @Composable
-private fun SideNavButton(
+private fun SideDockButton(
     icon: String,
     label: String,
     isSelected: Boolean,
@@ -386,16 +462,16 @@ private fun SideNavButton(
         onClick = onClick,
         shape = RoundedCornerShape(10.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (isSelected) activeColor else Color(0xFF242424)
+            containerColor = if (isSelected) activeColor else Color(0xFF222222)
         ),
-        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 8.dp),
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Text(text = icon, fontSize = 16.sp)
+            Text(text = icon, fontSize = 15.sp)
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = label,

@@ -234,6 +234,60 @@ func launchApp(name: String) {
     }
 }
 
+func sendKeyCombo(virtualKey: CGKeyCode, flags: CGEventFlags) {
+    let src = CGEventSource(stateID: .hidSystemState)
+    let down = CGEvent(keyboardEventSource: src, virtualKey: virtualKey, keyDown: true)
+    down?.flags = flags
+    let up = CGEvent(keyboardEventSource: src, virtualKey: virtualKey, keyDown: false)
+    down?.post(tap: .cghidEventTap)
+    up?.post(tap: .cghidEventTap)
+}
+
+func runAppleScript(_ script: String) {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    task.arguments = ["-e", script]
+    try? task.run()
+}
+
+func handleMacAction(_ action: String) {
+    switch action {
+    case "MISSION_CONTROL":
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-a", "Mission Control"]
+        try? task.run()
+    case "SPOTLIGHT":
+        sendKeyCombo(virtualKey: 49, flags: .maskCommand) // Cmd + Space
+    case "DESKTOP":
+        sendKeyCombo(virtualKey: 103, flags: []) // F11
+    case "CLOSE_WINDOW":
+        sendKeyCombo(virtualKey: 13, flags: .maskCommand) // Cmd + W
+    case "QUIT_APP":
+        sendKeyCombo(virtualKey: 12, flags: .maskCommand) // Cmd + Q
+    case "COPY":
+        sendKeyCombo(virtualKey: 8, flags: .maskCommand) // Cmd + C
+    case "PASTE":
+        sendKeyCombo(virtualKey: 9, flags: .maskCommand) // Cmd + V
+    case "UNDO":
+        sendKeyCombo(virtualKey: 6, flags: .maskCommand) // Cmd + Z
+    case "FULLSCREEN":
+        sendKeyCombo(virtualKey: 3, flags: [.maskCommand, .maskControl]) // Ctrl + Cmd + F
+    case "APP_SWITCHER":
+        sendKeyCombo(virtualKey: 48, flags: .maskCommand) // Cmd + Tab
+    case "VOL_UP":
+        runAppleScript("set volume output volume ((output volume of (get volume settings)) + 6)")
+    case "VOL_DOWN":
+        runAppleScript("set volume output volume ((output volume of (get volume settings)) - 6)")
+    case "MUTE":
+        runAppleScript("set volume output muted (not (output muted of (get volume settings)))")
+    case "PLAY_PAUSE":
+        runAppleScript("tell application \"System Events\" to key code 100")
+    default:
+        break
+    }
+}
+
 func typeText(_ text: String) {
     let source = CGEventSource(stateID: .hidSystemState)
     for char in text.utf16 {
@@ -454,6 +508,14 @@ class TrackpadServer {
             let appName = String(message.dropFirst("LAUNCH_APP,".count))
             DispatchQueue.main.async {
                 launchApp(name: appName)
+            }
+            return
+        }
+
+        if message.hasPrefix("ACTION,") {
+            let action = String(message.dropFirst("ACTION,".count))
+            DispatchQueue.main.async {
+                handleMacAction(action)
             }
             return
         }
