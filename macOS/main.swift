@@ -530,14 +530,14 @@ class MJPEGStreamer {
                     }
                     let filter = SCContentFilter(display: display, excludingWindows: [])
                     let config = SCStreamConfiguration()
-                    config.width = 960
-                    config.height = 540
+                    config.width = 640
+                    config.height = 360
                     config.showsCursor = true
 
                     let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
                     let mutableData = NSMutableData()
                     if let dest = CGImageDestinationCreateWithData(mutableData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) {
-                        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.45]
+                        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.28]
                         CGImageDestinationAddImage(dest, image, options as CFDictionary)
                         CGImageDestinationFinalize(dest)
                     }
@@ -562,7 +562,7 @@ class MJPEGStreamer {
                     try? await Task.sleep(nanoseconds: 500_000_000)
                 }
 
-                try? await Task.sleep(nanoseconds: 50_000_000) // ~20 FPS
+                try? await Task.sleep(nanoseconds: 33_333_333) // ~30 FPS ultra-low latency
             }
         }
     }
@@ -898,9 +898,25 @@ class RelayClient {
         }
     }
 
+    private var isSendingFrame = false
+    private let sendLock = NSLock()
+
     func sendBinary(_ data: Data) {
         guard isPeerConnected else { return }
-        webSocketTask?.send(.data(data)) { _ in }
+        sendLock.lock()
+        if isSendingFrame {
+            // Drop frame to ensure zero queueing / real-time latency!
+            sendLock.unlock()
+            return
+        }
+        isSendingFrame = true
+        sendLock.unlock()
+
+        webSocketTask?.send(.data(data)) { [weak self] _ in
+            self?.sendLock.lock()
+            self?.isSendingFrame = false
+            self?.sendLock.unlock()
+        }
     }
 }
 

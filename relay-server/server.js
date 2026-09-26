@@ -72,6 +72,10 @@ wss.on("connection", (ws, req) => {
   ws.on("message", (data, isBinary) => {
     const target = role === "mac" ? currentRoom.phone : currentRoom.mac;
     if (target && target.readyState === WebSocket.OPEN) {
+      if (isBinary && target.bufferedAmount > 24576) {
+        // Drop video frame if phone downlink has backpressure to prevent latency queue!
+        return;
+      }
       target.send(data, { binary: isBinary });
     }
   });

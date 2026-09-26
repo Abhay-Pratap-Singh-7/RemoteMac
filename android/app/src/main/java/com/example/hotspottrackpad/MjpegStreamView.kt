@@ -43,12 +43,18 @@ fun MjpegStreamView(
         }
     }
 
+    val decodeOptions = remember {
+        BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
+    }
+
     if (isRelay) {
         LaunchedEffect(relayFrame) {
             val bytes = relayFrame
             if (bytes != null && bytes.isNotEmpty()) {
                 val bmp = withContext(Dispatchers.Default) {
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
                 }
                 if (bmp != null) {
                     currentBitmap = bmp
