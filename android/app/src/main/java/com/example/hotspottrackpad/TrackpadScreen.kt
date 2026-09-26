@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,46 +17,58 @@ import androidx.compose.ui.unit.sp
 import kotlin.math.abs
 
 @Composable
-fun TrackpadScreen(client: TrackpadClient) {
-    val serverIp by client.connectedIp.collectAsState()
-    var manualIp by remember { mutableStateOf("") }
-
+fun TrackpadScreen(
+    client: TrackpadClient,
+    connectedIp: String,
+    onDisconnect: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF121212))
     ) {
-        // Status Bar / IP bar
+        // Top Connected Status Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Color(0xFF1E1E1E))
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                text = "Target Mac: ${serverIp ?: "Searching..."}",
-                color = if (serverIp != null) Color(0xFF4CAF50) else Color(0xFFFFB74D),
-                fontSize = 13.sp
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .background(Color(0xFF00E676), shape = RoundedCornerShape(5.dp))
+                )
+                Text(
+                    text = "Connected: $connectedIp",
+                    color = Color(0xFF00E676),
+                    fontSize = 13.sp
+                )
+            }
 
             Button(
-                onClick = { client.autoDiscover() },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C)),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                onClick = onDisconnect,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(6.dp)
             ) {
-                Text("Retry", fontSize = 12.sp, color = Color.White)
+                Text("Disconnect", fontSize = 12.sp, color = Color.White)
             }
         }
 
-        // Trackpad Surface
+        // Main Trackpad Surface
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .padding(12.dp)
-                .background(Color(0xFF1E1E1E))
+                .background(Color(0xFF1E1E1E), shape = RoundedCornerShape(12.dp))
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
@@ -76,7 +89,7 @@ fun TrackpadScreen(client: TrackpadClient) {
                                 val change = pointers[0].positionChange()
                                 totalMovement += abs(change.x) + abs(change.y)
                                 if (change.x != 0f || change.y != 0f) {
-                                    client.send("MOVE,${change.x * 1.5f},${change.y * 1.5f}")
+                                    client.send("MOVE,${change.x * 1.6f},${change.y * 1.6f}")
                                     pointers[0].consume()
                                 }
                             } else if (pointers.size >= 2) {
@@ -105,14 +118,15 @@ fun TrackpadScreen(client: TrackpadClient) {
                 }
         ) {
             Text(
-                text = "Touch Surface\n1 Finger: Move & Tap to Click\n2 Fingers: Scroll & Tap for Right-Click",
-                color = Color(0xFF555555),
+                text = "Touch Surface\n\n• 1 Finger: Move Cursor\n• 1 Finger Tap: Left Click\n• 2 Finger Drag: Scroll\n• 2 Finger Tap: Right Click",
+                color = Color(0xFF666666),
                 fontSize = 14.sp,
+                lineHeight = 22.sp,
                 modifier = Modifier.align(Alignment.Center)
             )
         }
 
-        // Bottom Left/Right Click Buttons
+        // Bottom Left & Right Click Action Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -123,16 +137,19 @@ fun TrackpadScreen(client: TrackpadClient) {
                 onClick = { client.send("CLICK") },
                 modifier = Modifier
                     .weight(1f)
-                    .height(56.dp),
+                    .height(54.dp),
+                shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C))
             ) {
                 Text("Left Click", color = Color.White)
             }
+
             Button(
                 onClick = { client.send("RCLICK") },
                 modifier = Modifier
                     .weight(1f)
-                    .height(56.dp),
+                    .height(54.dp),
+                shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C))
             ) {
                 Text("Right Click", color = Color.White)

@@ -2,6 +2,30 @@ import Cocoa
 import CoreGraphics
 import Network
 
+func getLocalIPAddresses() -> [String] {
+    var addresses = [String]()
+    var ifaddr: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return [] }
+    defer { freeifaddrs(ifaddr) }
+
+    for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+        let interface = ptr.pointee
+        let addrFamily = interface.ifa_addr.pointee.sa_family
+        if addrFamily == UInt8(AF_INET) {
+            let name = String(cString: interface.ifa_name)
+            if name != "lo0" {
+                var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
+                            &hostname, socklen_t(hostname.count),
+                            nil, socklen_t(0), NI_NUMERICHOST)
+                let ip = String(cString: hostname)
+                addresses.append("\(name): \(ip)")
+            }
+        }
+    }
+    return addresses
+}
+
 class TrackpadServer {
     private var listener: NWListener?
     private let port: UInt16 = 8080
@@ -17,9 +41,23 @@ class TrackpadServer {
                 self?.receive(on: connection)
             }
             listener?.start(queue: .global())
-            NSLog("Trackpad Server listening on UDP port %d", port)
+            
+            print("========================================")
+            print(" Trackpad Server listening on UDP: \(port)")
+            print(" Available Mac IP Addresses:")
+            let ips = getLocalIPAddresses()
+            if ips.isEmpty {
+                print("   (No network interfaces found)")
+            } else {
+                for ip in ips {
+                    print("   ➜ \(ip)")
+                }
+            }
+            print(" Enter one of the above IPs in the Android app")
+            print("========================================")
+            fflush(stdout)
         } catch {
-            NSLog("Failed to start listener: %@", error.localizedDescription)
+            print("Failed to start listener: \(error)")
         }
     }
 
@@ -36,9 +74,17 @@ class TrackpadServer {
     }
 
     private func handle(message: String, connection: NWConnection) {
-        if message == "DISCOVER_SERVER" {
-            let response = "SERVER_HERE".data(using: .utf8)
-            connection.send(content: response, completion: .contentProcessed({ _ in }))
+        if message == "DISCOVER_SERVER" || message == "CONNECT" || message == "PING" {
+            print("[UDP] Handshake '\(message)' received from \(connection.endpoint)")
+            let response = "CONNECTED".data(using: .utf8)
+            connection.send(content: response, completion: .contentProcessed({ error in
+                if let error = error {
+                    print("[UDP] Failed to reply: \(error)")
+                } else {
+                    print("[UDP] Replied 'CONNECTED' to \(connection.endpoint)")
+                }
+            }))
+            fflush(stdout)
             return
         }
 
@@ -95,14 +141,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         if !AXIsProcessTrustedWithOptions(options) {
-            NSLog("Accessibility permissions required: enable in System Settings > Privacy & Security > Accessibility.")
+            print("Accessibility permission required. Please enable in System Settings > Privacy & Security > Accessibility.")
         }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem?.button?.title = "📱 Trackpad"
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Trackpad Receiver Running", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Trackpad Server Active", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem?.menu = menu
