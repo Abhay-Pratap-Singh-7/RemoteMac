@@ -455,168 +455,13 @@ func pressKey(virtualKey: CGKeyCode) {
     up?.post(tap: .cghidEventTap)
 }
 
-// MARK: - DeskRTC Pixel Chunk Differential Engine (0-50ms Ultra-low Latency)
-class DeskRTCEngine {
-    let cols: Int = 8
-    let rows: Int = 6
-    private var lastChunkHashes: [UInt64]
-    private var pixelBuffer = [UInt8]()
-    private var bufferWidth = 0
-    private var bufferHeight = 0
-    private var frameIndex: UInt64 = 0
-    private var context: CGContext?
-    private let colorSpace = CGColorSpaceCreateDeviceRGB()
-
-    init() {
-        lastChunkHashes = [UInt64](repeating: 0, count: cols * rows)
-    }
-
-    func reset() {
-        lastChunkHashes = [UInt64](repeating: 0, count: cols * rows)
-        frameIndex = 0
-    }
-
-    struct DirtyChunk {
-        let col: UInt8
-        let row: UInt8
-        let x: UInt16
-        let y: UInt16
-        let w: UInt16
-        let h: UInt16
-        let jpegData: Data
-    }
-
-    func encodeDifferentialFrame(image: CGImage) -> Data? {
-        let width = image.width
-        let height = image.height
-
-        if bufferWidth != width || bufferHeight != height || context == nil {
-            bufferWidth = width
-            bufferHeight = height
-            pixelBuffer = [UInt8](repeating: 0, count: width * height * 4)
-            context = CGContext(
-                data: &pixelBuffer,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: width * 4,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            )
-            reset()
-        }
-
-        guard let ctx = context else { return nil }
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-
-        let tileW = width / cols
-        let tileH = height / rows
-        let bytesPerRow = width * 4
-
-        var dirtyChunks = [DirtyChunk]()
-        let isForceKeyframe = (frameIndex % 150 == 0) // Periodic keyframe every ~3-5 seconds
-        frameIndex &+= 1
-
-        pixelBuffer.withUnsafeBufferPointer { ptr in
-            guard let base = ptr.baseAddress else { return }
-
-            for r in 0..<rows {
-                let startY = r * tileH
-                let chunkH = (r == rows - 1) ? (height - startY) : tileH
-
-                for c in 0..<cols {
-                    let startX = c * tileW
-                    let chunkW = (c == cols - 1) ? (width - startX) : tileW
-                    let idx = r * cols + c
-
-                    // Ultra-fast FNV-1a hash sampled across tile
-                    var hashVal: UInt64 = 14695981039346656037
-                    let step = 4
-                    for y in stride(from: startY, to: startY + chunkH, by: step) {
-                        let rowPtr = base + y * bytesPerRow
-                        for x in stride(from: startX, to: startX + chunkW, by: step) {
-                            let p = (rowPtr + x * 4).withMemoryRebound(to: UInt32.self, capacity: 1) { $0.pointee }
-                            hashVal ^= UInt64(p)
-                            hashVal = hashVal &* 1099511628211
-                        }
-                    }
-
-                    if isForceKeyframe || hashVal != lastChunkHashes[idx] {
-                        lastChunkHashes[idx] = hashVal
-                        let cropRect = CGRect(x: startX, y: startY, width: chunkW, height: chunkH)
-                        if let tileImage = image.cropping(to: cropRect) {
-                            let mutableData = NSMutableData()
-                            if let dest = CGImageDestinationCreateWithData(mutableData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) {
-                                let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.50]
-                                CGImageDestinationAddImage(dest, tileImage, options as CFDictionary)
-                                CGImageDestinationFinalize(dest)
-                                let tileJpeg = mutableData as Data
-                                dirtyChunks.append(DirtyChunk(
-                                    col: UInt8(c),
-                                    row: UInt8(r),
-                                    x: UInt16(startX),
-                                    y: UInt16(startY),
-                                    w: UInt16(chunkW),
-                                    h: UInt16(chunkH),
-                                    jpegData: tileJpeg
-                                ))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if dirtyChunks.isEmpty {
-            return nil
-        }
-
-        // Assemble DeskRTC binary packet
-        var packet = Data()
-        packet.append(contentsOf: [0x44, 0x52, 0x54, 0x43]) // 'DRTC'
-        var wBE = UInt16(width).bigEndian
-        var hBE = UInt16(height).bigEndian
-        var countBE = UInt16(dirtyChunks.count).bigEndian
-        var flagsBE = UInt16(isForceKeyframe ? 0x01 : 0x00).bigEndian
-
-        withUnsafeBytes(of: &wBE) { packet.append(contentsOf: $0) }
-        withUnsafeBytes(of: &hBE) { packet.append(contentsOf: $0) }
-        withUnsafeBytes(of: &countBE) { packet.append(contentsOf: $0) }
-        withUnsafeBytes(of: &flagsBE) { packet.append(contentsOf: $0) }
-
-        for chunk in dirtyChunks {
-            packet.append(chunk.col)
-            packet.append(chunk.row)
-            var xBE = chunk.x.bigEndian
-            var yBE = chunk.y.bigEndian
-            var wChunkBE = chunk.w.bigEndian
-            var hChunkBE = chunk.h.bigEndian
-            var lenBE = UInt32(chunk.jpegData.count).bigEndian
-
-            withUnsafeBytes(of: &xBE) { packet.append(contentsOf: $0) }
-            withUnsafeBytes(of: &yBE) { packet.append(contentsOf: $0) }
-            withUnsafeBytes(of: &wChunkBE) { packet.append(contentsOf: $0) }
-            withUnsafeBytes(of: &hChunkBE) { packet.append(contentsOf: $0) }
-            withUnsafeBytes(of: &lenBE) { packet.append(contentsOf: $0) }
-            packet.append(chunk.jpegData)
-        }
-
-        return packet
-    }
-}
-
 // MARK: - MJPEG Video Streamer (HTTP on port 8081)
 class MJPEGStreamer {
     private var listener: NWListener?
     private var connections = [NWConnection]()
     private var isCapturing = false
     private let streamLock = NSLock()
-    private let deskRTCEngine = DeskRTCEngine()
     let port: UInt16 = 8081
-
-    func requestKeyframe() {
-        deskRTCEngine.reset()
-    }
 
     func start() {
         guard let p = NWEndpoint.Port(rawValue: port) else { return }
@@ -624,28 +469,14 @@ class MJPEGStreamer {
             let params = NWParameters.tcp
             params.allowLocalEndpointReuse = true
             listener = try NWListener(using: params, on: p)
-            listener?.stateUpdateHandler = { [weak self] state in
-                guard let self = self else { return }
-                switch state {
-                case .ready:
-                    print(" Video Streamer listening on HTTP: http://<macIp>:\(self.port)/stream")
-                    fflush(stdout)
-                case .failed(let error):
-                    print("[Streamer] Failed to listen on port \(self.port): \(error.localizedDescription)")
-                    fflush(stdout)
-                    exit(1)
-                default:
-                    break
-                }
-            }
             listener?.newConnectionHandler = { [weak self] conn in
                 conn.start(queue: .global(qos: .userInteractive))
                 self?.handleClient(conn)
             }
             listener?.start(queue: .global())
+            print(" Video Streamer listening on HTTP: http://<macIp>:\(port)/stream")
         } catch {
             print("Failed to start video streamer: \(error.localizedDescription)")
-            exit(1)
         }
     }
 
@@ -670,7 +501,6 @@ class MJPEGStreamer {
     }
 
     var onFrameCaptured: ((Data) -> Void)?
-    var onDeskRTCFrameCaptured: ((Data) -> Void)?
     var hasRelayViewer: (() -> Bool)?
 
     func triggerCaptureIfNeeded() {
@@ -725,46 +555,39 @@ class MJPEGStreamer {
                     config.showsCursor = true
 
                     let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-
-                    // 1. DeskRTC Pixel Chunk Differential Stream for Online Cloud Relay
-                    if relayActive {
-                        if let drtcPacket = self.deskRTCEngine.encodeDifferentialFrame(image: image) {
-                            self.onDeskRTCFrameCaptured?(drtcPacket)
-                        }
+                    let mutableData = NSMutableData()
+                    if let dest = CGImageDestinationCreateWithData(mutableData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) {
+                        let quality: Float = onlyRelay ? 0.48 : 0.52
+                        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+                        CGImageDestinationAddImage(dest, image, options as CFDictionary)
+                        CGImageDestinationFinalize(dest)
                     }
 
-                    // 2. Full Frame MJPEG Stream for Local Wi-Fi / Hotspot connections
-                    if count > 0 {
-                        let mutableData = NSMutableData()
-                        if let dest = CGImageDestinationCreateWithData(mutableData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) {
-                            let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.52]
-                            CGImageDestinationAddImage(dest, image, options as CFDictionary)
-                            CGImageDestinationFinalize(dest)
-                        }
+                    let jpegData = mutableData as Data
+                    self.onFrameCaptured?(jpegData)
+                    let header = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: \(jpegData.count)\r\n\r\n".data(using: .utf8)!
+                    let footer = "\r\n".data(using: .utf8)!
+                    var packet = Data()
+                    packet.append(header)
+                    packet.append(jpegData)
+                    packet.append(footer)
 
-                        let jpegData = mutableData as Data
-                        self.onFrameCaptured?(jpegData)
-                        let header = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: \(jpegData.count)\r\n\r\n".data(using: .utf8)!
-                        let footer = "\r\n".data(using: .utf8)!
-                        var packet = Data()
-                        packet.append(header)
-                        packet.append(jpegData)
-                        packet.append(footer)
-
-                        self.streamLock.lock()
-                        for c in self.connections {
-                            c.send(content: packet, completion: .contentProcessed({ _ in }))
-                        }
-                        self.streamLock.unlock()
+                    self.streamLock.lock()
+                    for c in self.connections {
+                        c.send(content: packet, completion: .contentProcessed({ _ in }))
                     }
+                    self.streamLock.unlock()
                 } catch {
                     print("[Stream Capture Error] \(error.localizedDescription)")
                     fflush(stdout)
-                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    self.streamLock.lock()
+                    self.isCapturing = false
+                    self.streamLock.unlock()
+                    break
                 }
 
                 let elapsed = ProcessInfo.processInfo.systemUptime - loopStart
-                let targetInterval: Double = (count == 0 && relayActive) ? 0.025 : 0.0166667 // ~40 FPS for low-latency DeskRTC, 60 FPS for hotspot
+                let targetInterval: Double = (count == 0 && relayActive) ? 0.050 : 0.0166667 // ~20 FPS for cloud relay, 60 FPS for local hotspot!
                 let remaining = max(0.001, targetInterval - elapsed)
                 try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
             }
@@ -790,18 +613,6 @@ class TrackpadServer {
             let params = NWParameters.udp
             params.allowLocalEndpointReuse = true
             listener = try NWListener(using: params, on: nwPort)
-            listener?.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    break
-                case .failed(let error):
-                    print("[TrackpadServer] Failed to listen on UDP port \(self.port): \(error.localizedDescription)")
-                    fflush(stdout)
-                    exit(1)
-                default:
-                    break
-                }
-            }
             listener?.newConnectionHandler = { [weak self] connection in
                 connection.start(queue: .global(qos: .userInteractive))
                 self?.receive(on: connection)
@@ -1143,7 +954,7 @@ class RelayClient {
         guard isPeerConnected else { return }
         let now = ProcessInfo.processInfo.systemUptime
         sendLock.lock()
-        if isSendingFrame || (now - lastRelaySendTime < 0.016) {
+        if isSendingFrame || (now - lastRelaySendTime < 0.048) {
             // Drop frame to ensure zero queueing / real-time latency!
             sendLock.unlock()
             return
@@ -1187,15 +998,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var relayClient: RelayClient?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if !AXIsProcessTrusted() {
-            print("[Warning] Accessibility permission not yet granted. Check System Settings > Privacy & Security > Accessibility.")
-            Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { timer in
-                if AXIsProcessTrusted() {
-                    print("[Accessibility] Permission verified! Controls active.")
-                    fflush(stdout)
-                    timer.invalidate()
-                }
-            }
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        if !AXIsProcessTrustedWithOptions(options) {
+            print("Accessibility permission required. Please enable in System Settings > Privacy & Security > Accessibility.")
         }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -1213,18 +1018,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let relay = getRelayConfig() {
             print("[Relay] Cloud Relay configured: \(relay.url) (Room: \(relay.room))")
             let client = RelayClient(urlString: relay.url, room: relay.room) { [weak self] message, reply in
-                if message == "START_STREAM" || message == "KEYFRAME" || message == "RESET_STREAM" {
+                if message == "START_STREAM" {
                     self?.streamer.triggerCaptureIfNeeded()
-                    self?.streamer.requestKeyframe()
                 }
                 processIncomingCommand(message, replyHandler: reply)
             }
             self.relayClient = client
             self.streamer.hasRelayViewer = { [weak client] in
                 client?.isPeerConnected ?? false
-            }
-            self.streamer.onDeskRTCFrameCaptured = { [weak client] drtcFrame in
-                client?.sendBinary(drtcFrame)
             }
             self.streamer.onFrameCaptured = { [weak client] frame in
                 client?.sendBinary(frame)

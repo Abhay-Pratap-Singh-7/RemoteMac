@@ -12,7 +12,7 @@ mkdir -p "$PLIST_DIR"
 
 # Ensure binary is built and executable
 if [ ! -f "$SERVER_BIN" ]; then
-    echo "MacTrackpadServer not found. Compiling..."
+    echo "MacTrackpadServer binary not found. Compiling..."
     "$DIR/build.sh"
 fi
 chmod +x "$SERVER_BIN"
