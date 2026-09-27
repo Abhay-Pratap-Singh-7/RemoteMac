@@ -40,30 +40,16 @@ fun MjpegStreamView(
         LaunchedEffect(Unit) {
             client.send("START_STREAM")
             withContext(Dispatchers.Default) {
-                var reusableBitmap: Bitmap? = null
                 val decodeOptions = BitmapFactory.Options().apply {
                     inPreferredConfig = Bitmap.Config.RGB_565
-                    inMutable = true
                 }
 
                 for (bytes in client.streamFrameChannel) {
                     if (!isActive) break
                     if (bytes.isEmpty()) continue
                     try {
-                        val currentTarget = reusableBitmap
-                        if (currentTarget != null && !currentTarget.isRecycled) {
-                            decodeOptions.inBitmap = currentTarget
-                        }
                         val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
                         if (bmp != null) {
-                            reusableBitmap = bmp
-                            currentBitmap = bmp
-                        }
-                    } catch (e: IllegalArgumentException) {
-                        decodeOptions.inBitmap = null
-                        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
-                        if (bmp != null) {
-                            reusableBitmap = bmp
                             currentBitmap = bmp
                         }
                     } catch (_: Exception) {}
@@ -80,10 +66,8 @@ fun MjpegStreamView(
             withContext(Dispatchers.IO) {
                 var connection: HttpURLConnection? = null
                 var inputStream: BufferedInputStream? = null
-                var reusableBitmap: Bitmap? = null
                 val decodeOptions = BitmapFactory.Options().apply {
                     inPreferredConfig = Bitmap.Config.RGB_565
-                    inMutable = true
                 }
                 try {
                     val url = URL(streamUrl)
@@ -98,23 +82,9 @@ fun MjpegStreamView(
 
                     while (isActive) {
                         val frameBytes = reader.readNextFrame() ?: break
-                        try {
-                            val currentTarget = reusableBitmap
-                            if (currentTarget != null && !currentTarget.isRecycled) {
-                                decodeOptions.inBitmap = currentTarget
-                            }
-                            val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
-                            if (bitmap != null) {
-                                reusableBitmap = bitmap
-                                currentBitmap = bitmap
-                            }
-                        } catch (e: IllegalArgumentException) {
-                            decodeOptions.inBitmap = null
-                            val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
-                            if (bitmap != null) {
-                                reusableBitmap = bitmap
-                                currentBitmap = bitmap
-                            }
+                        val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
+                        if (bitmap != null) {
+                            currentBitmap = bitmap
                         }
                     }
                 } catch (e: Exception) {
