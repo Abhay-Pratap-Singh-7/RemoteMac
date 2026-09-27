@@ -535,6 +535,8 @@ class MJPEGStreamer {
                 }
                 self.streamLock.unlock()
 
+                let loopStart = ProcessInfo.processInfo.systemUptime
+
                 do {
                     let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
                     guard let display = content.displays.first else {
@@ -555,7 +557,7 @@ class MJPEGStreamer {
                     let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
                     let mutableData = NSMutableData()
                     if let dest = CGImageDestinationCreateWithData(mutableData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) {
-                        let quality: Float = onlyRelay ? 0.48 : 0.58
+                        let quality: Float = onlyRelay ? 0.48 : 0.52
                         let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
                         CGImageDestinationAddImage(dest, image, options as CFDictionary)
                         CGImageDestinationFinalize(dest)
@@ -581,8 +583,10 @@ class MJPEGStreamer {
                     try? await Task.sleep(nanoseconds: 500_000_000)
                 }
 
-                let sleepNs: UInt64 = (count == 0 && relayActive) ? 50_000_000 : 33_333_333
-                try? await Task.sleep(nanoseconds: sleepNs)
+                let elapsed = ProcessInfo.processInfo.systemUptime - loopStart
+                let targetInterval: Double = (count == 0 && relayActive) ? 0.050 : 0.0166667 // ~20 FPS for cloud relay, 60 FPS for local hotspot!
+                let remaining = max(0.001, targetInterval - elapsed)
+                try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
             }
         }
     }

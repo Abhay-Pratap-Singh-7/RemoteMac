@@ -143,31 +143,37 @@ fun MjpegStreamView(
 }
 
 class JpegFrameReader(private val inputStream: InputStream) {
-    private val buffer = ByteArray(65536)
-
     fun readNextFrame(): ByteArray? {
-        val output = ByteArrayOutputStream()
-        var foundStart = false
-        var prevByte = -1
+        var contentLength = -1
 
         while (true) {
-            val b = inputStream.read()
-            if (b == -1) return null
-
-            if (!foundStart) {
-                if (prevByte == 0xFF && b == 0xD8) {
-                    foundStart = true
-                    output.write(0xFF)
-                    output.write(0xD8)
+            val line = readLine(inputStream) ?: return null
+            if (line.isEmpty()) {
+                if (contentLength > 0) {
+                    val frameData = ByteArray(contentLength)
+                    var totalRead = 0
+                    while (totalRead < contentLength) {
+                        val count = inputStream.read(frameData, totalRead, contentLength - totalRead)
+                        if (count == -1) return null
+                        totalRead += count
+                    }
+                    return frameData
                 }
-                prevByte = b
-            } else {
-                output.write(b)
-                if (prevByte == 0xFF && b == 0xD9) {
-                    return output.toByteArray()
-                }
-                prevByte = b
+            } else if (line.startsWith("Content-Length:", ignoreCase = true)) {
+                contentLength = line.substringAfter(":").trim().toIntOrNull() ?: -1
             }
+        }
+    }
+
+    private fun readLine(input: InputStream): String? {
+        val sb = StringBuilder()
+        while (true) {
+            val b = input.read()
+            if (b == -1) return if (sb.isNotEmpty()) sb.toString() else null
+            if (b == '\n'.code) {
+                return sb.toString().trimEnd('\r')
+            }
+            sb.append(b.toChar())
         }
     }
 }
