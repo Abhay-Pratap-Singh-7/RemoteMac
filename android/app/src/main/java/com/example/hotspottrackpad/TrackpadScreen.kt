@@ -154,6 +154,14 @@ fun TrackpadScreen(
                             var totalMovement = 0f
                             var maxFingerCount = 1
 
+                            var pendingDx = 0f
+                            var pendingDy = 0f
+                            var lastMoveTime = 0L
+
+                            var pendingScrollX = 0f
+                            var pendingScrollY = 0f
+                            var lastScrollTime = 0L
+
                             while (true) {
                                 val event = awaitPointerEvent()
                                 val pointers = event.changes.filter { it.pressed }
@@ -163,12 +171,24 @@ fun TrackpadScreen(
                                     maxFingerCount = pointers.size
                                 }
 
+                                val now = System.currentTimeMillis()
+
                                 if (pointers.size == 1) {
                                     val change = pointers[0].positionChange()
                                     totalMovement += abs(change.x) + abs(change.y)
-                                    if (change.x != 0f || change.y != 0f) {
-                                        client.send("MOVE,${change.x * 1.5f},${change.y * 1.5f}")
-                                        pointers[0].consume()
+                                    pendingDx += change.x * 1.5f
+                                    pendingDy += change.y * 1.5f
+                                    pointers[0].consume()
+
+                                    // Coalesce / batch micro-movements to avoid flooding WebSocket
+                                    val minInterval = if (client.isRelayMode.value) 20L else 10L
+                                    if (now - lastMoveTime >= minInterval) {
+                                        if (abs(pendingDx) >= 0.2f || abs(pendingDy) >= 0.2f) {
+                                            client.sendMove(pendingDx, pendingDy)
+                                            pendingDx = 0f
+                                            pendingDy = 0f
+                                            lastMoveTime = now
+                                        }
                                     }
                                 } else if (pointers.size >= 2) {
                                     val p1 = pointers[0].positionChange()
@@ -176,12 +196,33 @@ fun TrackpadScreen(
                                     val avgDx = (p1.x + p2.x) / 2f
                                     val avgDy = (p1.y + p2.y) / 2f
                                     totalMovement += abs(avgDx) + abs(avgDy)
-                                    if (avgDx != 0f || avgDy != 0f) {
-                                        client.send("SCROLL,${(-avgDx).toInt()},${avgDy.toInt()}")
-                                        pointers[0].consume()
-                                        pointers[1].consume()
+                                    pendingScrollX += -avgDx
+                                    pendingScrollY += avgDy
+                                    pointers[0].consume()
+                                    pointers[1].consume()
+
+                                    val minInterval = if (client.isRelayMode.value) 25L else 12L
+                                    if (now - lastScrollTime >= minInterval) {
+                                        val sX = pendingScrollX.toInt()
+                                        val sY = pendingScrollY.toInt()
+                                        if (sX != 0 || sY != 0) {
+                                            client.sendScroll(sX, sY)
+                                            pendingScrollX -= sX
+                                            pendingScrollY -= sY
+                                            lastScrollTime = now
+                                        }
                                     }
                                 }
+                            }
+
+                            // Flush any remaining accumulated movements on release
+                            if (abs(pendingDx) >= 0.2f || abs(pendingDy) >= 0.2f) {
+                                client.sendMove(pendingDx, pendingDy)
+                            }
+                            val remainingSx = pendingScrollX.toInt()
+                            val remainingSy = pendingScrollY.toInt()
+                            if (remainingSx != 0 || remainingSy != 0) {
+                                client.sendScroll(remainingSx, remainingSy)
                             }
 
                             val duration = System.currentTimeMillis() - startTime

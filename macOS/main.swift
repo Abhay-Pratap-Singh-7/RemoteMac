@@ -545,7 +545,8 @@ class MJPEGStreamer {
                     }
                     let filter = SCContentFilter(display: display, excludingWindows: [])
                     let config = SCStreamConfiguration()
-                    let targetWidth = 1280
+                    let onlyRelay = (count == 0 && relayActive)
+                    let targetWidth = onlyRelay ? 1080 : 1280
                     let targetHeight = Int(Double(targetWidth) * (Double(display.height) / Double(display.width)))
                     config.width = targetWidth
                     config.height = targetHeight
@@ -554,7 +555,8 @@ class MJPEGStreamer {
                     let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
                     let mutableData = NSMutableData()
                     if let dest = CGImageDestinationCreateWithData(mutableData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) {
-                        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.58]
+                        let quality: Float = onlyRelay ? 0.48 : 0.58
+                        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
                         CGImageDestinationAddImage(dest, image, options as CFDictionary)
                         CGImageDestinationFinalize(dest)
                     }
@@ -579,7 +581,8 @@ class MJPEGStreamer {
                     try? await Task.sleep(nanoseconds: 500_000_000)
                 }
 
-                try? await Task.sleep(nanoseconds: 33_333_333) // ~30 FPS ultra-low latency
+                let sleepNs: UInt64 = (count == 0 && relayActive) ? 50_000_000 : 33_333_333
+                try? await Task.sleep(nanoseconds: sleepNs)
             }
         }
     }
@@ -937,17 +940,20 @@ class RelayClient {
     }
 
     private var isSendingFrame = false
+    private var lastRelaySendTime: Double = 0
     private let sendLock = NSLock()
 
     func sendBinary(_ data: Data) {
         guard isPeerConnected else { return }
+        let now = ProcessInfo.processInfo.systemUptime
         sendLock.lock()
-        if isSendingFrame {
+        if isSendingFrame || (now - lastRelaySendTime < 0.048) {
             // Drop frame to ensure zero queueing / real-time latency!
             sendLock.unlock()
             return
         }
         isSendingFrame = true
+        lastRelaySendTime = now
         sendLock.unlock()
 
         webSocketTask?.send(.data(data)) { [weak self] _ in

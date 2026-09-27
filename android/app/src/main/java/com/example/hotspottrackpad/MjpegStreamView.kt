@@ -33,31 +33,40 @@ fun MjpegStreamView(
     modifier: Modifier = Modifier
 ) {
     val isRelay by client.isRelayMode.collectAsState()
-    val relayFrame by client.streamFrame.collectAsState()
     var currentBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(isRelay) {
-        if (isRelay) {
-            client.send("START_STREAM")
-        }
-    }
-
-    val decodeOptions = remember {
-        BitmapFactory.Options().apply {
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-        }
-    }
-
     if (isRelay) {
-        LaunchedEffect(relayFrame) {
-            val bytes = relayFrame
-            if (bytes != null && bytes.isNotEmpty()) {
-                val bmp = withContext(Dispatchers.Default) {
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+        LaunchedEffect(Unit) {
+            client.send("START_STREAM")
+            withContext(Dispatchers.Default) {
+                var reusableBitmap: Bitmap? = null
+                val decodeOptions = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                    inMutable = true
                 }
-                if (bmp != null) {
-                    currentBitmap = bmp
+
+                for (bytes in client.streamFrameChannel) {
+                    if (!isActive) break
+                    if (bytes.isEmpty()) continue
+                    try {
+                        val currentTarget = reusableBitmap
+                        if (currentTarget != null && !currentTarget.isRecycled) {
+                            decodeOptions.inBitmap = currentTarget
+                        }
+                        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+                        if (bmp != null) {
+                            reusableBitmap = bmp
+                            currentBitmap = bmp
+                        }
+                    } catch (e: IllegalArgumentException) {
+                        decodeOptions.inBitmap = null
+                        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+                        if (bmp != null) {
+                            reusableBitmap = bmp
+                            currentBitmap = bmp
+                        }
+                    } catch (_: Exception) {}
                 }
             }
         }
@@ -71,6 +80,11 @@ fun MjpegStreamView(
             withContext(Dispatchers.IO) {
                 var connection: HttpURLConnection? = null
                 var inputStream: BufferedInputStream? = null
+                var reusableBitmap: Bitmap? = null
+                val decodeOptions = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                    inMutable = true
+                }
                 try {
                     val url = URL(streamUrl)
                     connection = (url.openConnection() as HttpURLConnection).apply {
@@ -84,9 +98,23 @@ fun MjpegStreamView(
 
                     while (isActive) {
                         val frameBytes = reader.readNextFrame() ?: break
-                        val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size)
-                        if (bitmap != null) {
-                            currentBitmap = bitmap
+                        try {
+                            val currentTarget = reusableBitmap
+                            if (currentTarget != null && !currentTarget.isRecycled) {
+                                decodeOptions.inBitmap = currentTarget
+                            }
+                            val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
+                            if (bitmap != null) {
+                                reusableBitmap = bitmap
+                                currentBitmap = bitmap
+                            }
+                        } catch (e: IllegalArgumentException) {
+                            decodeOptions.inBitmap = null
+                            val bitmap = BitmapFactory.decodeByteArray(frameBytes, 0, frameBytes.size, decodeOptions)
+                            if (bitmap != null) {
+                                reusableBitmap = bitmap
+                                currentBitmap = bitmap
+                            }
                         }
                     }
                 } catch (e: Exception) {

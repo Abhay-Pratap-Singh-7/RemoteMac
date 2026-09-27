@@ -64,6 +64,7 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
 
     private val _streamFrame = MutableStateFlow<ByteArray?>(null)
     val streamFrame: StateFlow<ByteArray?> = _streamFrame
+    val streamFrameChannel = Channel<ByteArray>(capacity = Channel.CONFLATED)
 
     private val _isMacAsleep = MutableStateFlow(false)
     val isMacAsleep: StateFlow<Boolean> = _isMacAsleep
@@ -306,6 +307,16 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
         send("CHECK_SLEEP")
     }
 
+    fun sendMove(dx: Float, dy: Float) {
+        val fx = String.format(java.util.Locale.US, "%.1f", dx)
+        val fy = String.format(java.util.Locale.US, "%.1f", dy)
+        send("MOVE,$fx,$fy")
+    }
+
+    fun sendScroll(dx: Int, dy: Int) {
+        send("SCROLL,$dx,$dy")
+    }
+
     fun connectRelay(relayUrl: String, room: String) {
         disconnect()
         _status.value = ConnectionStatus.Connecting("Connecting to Cloud Relay...")
@@ -322,7 +333,8 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
         val fullUrl = "$wsUrl/?role=phone&room=$roomCode"
 
         val okHttpClient = OkHttpClient.Builder()
-            .pingInterval(20, TimeUnit.SECONDS)
+            .pingInterval(15, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .build()
 
         val request = Request.Builder().url(fullUrl).build()
@@ -341,7 +353,9 @@ class TrackpadClient(private val context: Context, private val port: Int = 8080)
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                _streamFrame.value = bytes.toByteArray()
+                val data = bytes.toByteArray()
+                _streamFrame.value = data
+                streamFrameChannel.trySend(data)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {

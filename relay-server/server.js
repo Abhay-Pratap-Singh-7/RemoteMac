@@ -30,9 +30,12 @@ const server = http.createServer((req, res) => {
   res.end("Not Found");
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, perMessageDeflate: false });
 
 wss.on("connection", (ws, req) => {
+  if (ws._socket) {
+    ws._socket.setNoDelay(true);
+  }
   const url = new URL(req.url, `http://${req.headers.host}`);
   const role = url.searchParams.get("role") || "client"; // 'mac' or 'phone'
   const room = url.searchParams.get("room") || "default";
@@ -72,7 +75,7 @@ wss.on("connection", (ws, req) => {
   ws.on("message", (data, isBinary) => {
     const target = role === "mac" ? currentRoom.phone : currentRoom.mac;
     if (target && target.readyState === WebSocket.OPEN) {
-      if (isBinary && target.bufferedAmount > 24576) {
+      if (isBinary && target.bufferedAmount > 16384) {
         // Drop video frame if phone downlink has backpressure to prevent latency queue!
         return;
       }
