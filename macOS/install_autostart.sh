@@ -4,15 +4,15 @@ set -e
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$PLIST_DIR/com.user.mactrackpadserver.plist"
-SERVER_BIN="$DIR/MacTrackpadServer.app/Contents/MacOS/MacTrackpadServer"
+SERVER_BIN="$DIR/MacTrackpadServer"
 WORK_DIR="$(dirname "$DIR")"
 LOG_PATH="$DIR/server.log"
 
 mkdir -p "$PLIST_DIR"
 
-# Ensure app bundle is built and executable
+# Ensure binary is built and executable
 if [ ! -f "$SERVER_BIN" ]; then
-    echo "MacTrackpadServer.app not found. Compiling..."
+    echo "MacTrackpadServer not found. Compiling..."
     "$DIR/build.sh"
 fi
 chmod +x "$SERVER_BIN"
