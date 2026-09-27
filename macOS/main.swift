@@ -1187,9 +1187,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var relayClient: RelayClient?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        if !AXIsProcessTrustedWithOptions(options) {
-            print("Accessibility permission required. Please enable in System Settings > Privacy & Security > Accessibility.")
+        if !AXIsProcessTrusted() {
+            print("[Warning] Accessibility permission not yet granted. Check System Settings > Privacy & Security > Accessibility.")
         }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
