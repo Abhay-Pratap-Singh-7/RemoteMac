@@ -1189,6 +1189,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !AXIsProcessTrusted() {
             print("[Warning] Accessibility permission not yet granted. Check System Settings > Privacy & Security > Accessibility.")
+            Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { timer in
+                if AXIsProcessTrusted() {
+                    print("[Accessibility] Permission verified! Controls active.")
+                    fflush(stdout)
+                    timer.invalidate()
+                }
+            }
         }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
