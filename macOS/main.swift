@@ -469,14 +469,28 @@ class MJPEGStreamer {
             let params = NWParameters.tcp
             params.allowLocalEndpointReuse = true
             listener = try NWListener(using: params, on: p)
+            listener?.stateUpdateHandler = { [weak self] state in
+                guard let self = self else { return }
+                switch state {
+                case .ready:
+                    print(" Video Streamer listening on HTTP: http://<macIp>:\(self.port)/stream")
+                    fflush(stdout)
+                case .failed(let error):
+                    print("[Streamer] Failed to listen on port \(self.port): \(error.localizedDescription)")
+                    fflush(stdout)
+                    exit(1)
+                default:
+                    break
+                }
+            }
             listener?.newConnectionHandler = { [weak self] conn in
                 conn.start(queue: .global(qos: .userInteractive))
                 self?.handleClient(conn)
             }
             listener?.start(queue: .global())
-            print(" Video Streamer listening on HTTP: http://<macIp>:\(port)/stream")
         } catch {
             print("Failed to start video streamer: \(error.localizedDescription)")
+            exit(1)
         }
     }
 
@@ -610,6 +624,18 @@ class TrackpadServer {
             let params = NWParameters.udp
             params.allowLocalEndpointReuse = true
             listener = try NWListener(using: params, on: nwPort)
+            listener?.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    break
+                case .failed(let error):
+                    print("[TrackpadServer] Failed to listen on UDP port \(self.port): \(error.localizedDescription)")
+                    fflush(stdout)
+                    exit(1)
+                default:
+                    break
+                }
+            }
             listener?.newConnectionHandler = { [weak self] connection in
                 connection.start(queue: .global(qos: .userInteractive))
                 self?.receive(on: connection)
